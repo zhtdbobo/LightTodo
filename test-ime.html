@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>IME Test</title>
+</head>
+<body>
+  <h1>中文输入测试</h1>
+  <input type="text" id="test" placeholder="测试中文输入" style="width: 300px; padding: 10px; font-size: 16px;">
+  <p id="output"></p>
+
+  <script>
+    const input = document.getElementById('test');
+    const output = document.getElementById('output');
+
+    input.addEventListener('input', (e) => {
+      output.textContent = 'Input: ' + e.target.value;
+    });
+
+    input.addEventListener('compositionstart', () => {
+      console.log('Composition start');
+      output.textContent += ' [组合输入开始]';
+    });
+
+    input.addEventListener('compositionend', (e) => {
+      console.log('Composition end:', e.data);
+      output.textContent += ' [组合输入结束: ' + e.data + ']';
+    });
+  </script>
+</body>
+</html>
