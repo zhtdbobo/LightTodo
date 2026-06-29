@@ -107,6 +107,27 @@ impl Database {
             [],
         )?;
 
+        // 创建 WebDAV 配置表
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS webdav_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                url TEXT NOT NULL,
+                username TEXT NOT NULL,
+                password TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                auto_sync INTEGER NOT NULL DEFAULT 0,
+                directory TEXT NOT NULL DEFAULT 'LightTodo',
+                last_sync INTEGER
+            )",
+            [],
+        )?;
+
+        // 迁移：添加 directory 列（如果不存在）
+        let _ = conn.execute(
+            "ALTER TABLE webdav_config ADD COLUMN directory TEXT NOT NULL DEFAULT 'LightTodo'",
+            [],
+        );
+
         Ok(())
     }
 

@@ -4,6 +4,8 @@
 mod commands;
 mod database;
 mod models;
+mod webdav;
+mod sync;
 
 use commands::AppState;
 use database::Database;
@@ -35,12 +37,20 @@ fn main() {
             commands::delete_note,
             commands::search_notes,
             commands::get_all_tags,
+            sync::get_webdav_config,
+            sync::save_webdav_config,
+            sync::test_webdav_connection,
+            sync::sync_notes,
+            sync::push_notes,
+            sync::pull_notes,
+            sync::reset_sync_state,
         ])
         .setup(|app| {
             // 创建托盘菜单
             let show_i = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
+            let settings_i = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+            let menu = Menu::with_items(app, &[&show_i, &settings_i, &quit_i])?;
 
             // 创建系统托盘图标
             let _tray = TrayIconBuilder::new()
@@ -53,6 +63,26 @@ fn main() {
                             if let Some(window) = app.get_webview_window("main") {
                                 let _ = window.show();
                                 let _ = window.set_focus();
+                            }
+                        }
+                        "settings" => {
+                            use tauri::Manager;
+                            use tauri::WebviewWindowBuilder;
+
+                            if let Some(window) = app.get_webview_window("settings") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            } else {
+                                let _ = WebviewWindowBuilder::new(
+                                    app,
+                                    "settings",
+                                    tauri::WebviewUrl::App("/#settings".into())
+                                )
+                                .title("WebDAV 同步设置")
+                                .inner_size(700.0, 600.0)
+                                .resizable(true)
+                                .center()
+                                .build();
                             }
                         }
                         "quit" => {
