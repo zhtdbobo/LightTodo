@@ -102,7 +102,7 @@ export function NotesList() {
   };
 
   // 切换完成状态
-  const handleToggleCompleted = async (note: Note, e: React.MouseEvent) => {
+  const handleToggleCompleted = async (note: Note, e: React.ChangeEvent<HTMLInputElement>) => {
     e.stopPropagation();
     try {
       const updated = await updateNote({

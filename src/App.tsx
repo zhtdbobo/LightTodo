@@ -63,6 +63,18 @@ function App() {
     }
   };
 
+  // 关闭窗口（隐藏到任务栏）
+  const handleCloseWindow = async () => {
+    console.log("Closing window...");
+    try {
+      const appWindow = new Window('main');
+      await appWindow.hide();
+      console.log("Window hidden successfully");
+    } catch (error) {
+      console.error("Failed to hide window:", error);
+    }
+  };
+
   // 创建新便签
   const handleCreateNote = async () => {
     console.log("Creating note...");
@@ -148,14 +160,6 @@ function App() {
       updateNoteInStore(updated);
     } catch (error) {
       console.error("Failed to edit:", error);
-    }
-  };
-
-  // 处理输入框失焦
-  const handleBlur = async (note: Note) => {
-    // 如果标题为空，删除这条待办
-    if (!note.title.trim()) {
-      await handleDelete(note);
     }
   };
 
@@ -287,17 +291,30 @@ function App() {
           </button>
           <h1 className="text-sm font-medium text-gray-600">待办</h1>
         </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            handleCreateNote();
-          }}
-          className="text-cyan-400 hover:text-cyan-500 text-xl transition-colors cursor-pointer"
-          title="新建"
-          style={{ WebkitAppRegion: 'no-drag' } as any}
-        >
-          +
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleCreateNote();
+            }}
+            className="text-cyan-400 hover:text-cyan-500 text-xl transition-colors cursor-pointer"
+            title="新建"
+            style={{ WebkitAppRegion: 'no-drag' } as any}
+          >
+            +
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleCloseWindow();
+            }}
+            className="text-gray-400 hover:text-gray-600 text-base font-bold transition-colors cursor-pointer w-5 h-5 flex items-center justify-center"
+            title="隐藏到托盘"
+            style={{ WebkitAppRegion: 'no-drag' } as any}
+          >
+            ✕
+          </button>
+        </div>
       </div>
 
       {/* 待办列表区域 */}

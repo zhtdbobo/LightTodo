@@ -5,7 +5,7 @@ interface NoteCardProps {
   onClick: () => void;
   onDelete: (e: React.MouseEvent) => void;
   onTogglePinned: (e: React.MouseEvent) => void;
-  onToggleCompleted?: (e: React.MouseEvent) => void;
+  onToggleCompleted?: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
 export function NoteCard({

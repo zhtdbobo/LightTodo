@@ -1,0 +1,3 @@
+// TypeScript declaration file for styles.css
+declare const styles: Record<string, string>;
+export default styles;
