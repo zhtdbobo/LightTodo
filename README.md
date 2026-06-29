@@ -17,11 +17,32 @@
 
 ### 环境要求
 
+#### 1. 安装 Node.js
+
 - **Node.js** 18+ - [下载地址](https://nodejs.org/)
+- 下载安装后，验证安装：
+  ```bash
+  node --version
+  npm --version
+  ```
+
+#### 2. 安装 Rust
+
 - **Rust** 1.70+ - [下载地址](https://rustup.rs/)
-- **Windows 构建工具**（仅 Windows）:
-  - 方式 1: 安装 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)，勾选 "C++ 生成工具"
-  - 方式 2: 运行 `npm install --global windows-build-tools`（需要管理员权限）
+- **安装步骤**：
+  1. 访问 https://rustup.rs/ 下载 `rustup-init.exe`（Windows）
+  2. 运行安装器，选择默认安装（输入 `1` 然后回车）
+  3. **重启终端**（让环境变量生效）
+  4. 验证安装：
+     ```bash
+     rustc --version
+     cargo --version
+     ```
+
+#### 3. 安装 Windows 构建工具（仅 Windows）
+
+- 方式 1: 安装 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)，勾选 "C++ 生成工具"
+- 方式 2: 运行 `npm install --global windows-build-tools`（需要管理员权限）
 
 ### 克隆并启动项目
 

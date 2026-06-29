@@ -7,17 +7,33 @@ import { Window } from "@tauri-apps/api/window";
 function App() {
   const { notes, setNotes, addNote, updateNoteInStore, removeNote } = useNotesStore();
   const [isWindowPinned, setIsWindowPinned] = useState(false);
+  const hasInitialized = useRef(false);
 
   // 加载便签
   useEffect(() => {
-    loadNotes();
-    checkWindowPinned();
+    if (!hasInitialized.current) {
+      hasInitialized.current = true;
+      loadNotes();
+      checkWindowPinned();
+    }
   }, []);
 
   const loadNotes = async () => {
     try {
       const allNotes = await getAllNotes();
       setNotes(allNotes);
+
+      // 如果是首次使用（没有任何待办），创建一个示例待办
+      if (allNotes.length === 0) {
+        const firstNote = await createNote({
+          title: "欢迎使用 LightTodo！点击可编辑，点击 ✓ 完成",
+          content: "",
+          isTodo: true,
+          tags: [],
+          priority: 0, // 低优先级
+        });
+        addNote(firstNote);
+      }
     } catch (error) {
       console.error("Failed to load notes:", error);
     }
@@ -50,6 +66,23 @@ function App() {
   // 创建新便签
   const handleCreateNote = async () => {
     console.log("Creating note...");
+
+    // 先检查是否已有空标题的待办
+    const emptyNote = notes.find(n => !n.title.trim() && !n.isCompleted);
+    if (emptyNote) {
+      // 如果已有空待办，直接聚焦到它
+      setTimeout(() => {
+        const inputs = document.querySelectorAll('input[type="text"]');
+        const emptyInput = Array.from(inputs).find(
+          (input) => (input as HTMLInputElement).value === ""
+        ) as HTMLInputElement;
+        if (emptyInput) {
+          emptyInput.focus();
+        }
+      }, 50);
+      return;
+    }
+
     try {
       const newNote = await createNote({
         title: "",
@@ -61,12 +94,15 @@ function App() {
       console.log("Note created:", newNote);
       addNote(newNote);
 
-      // 延迟聚焦到新建的输入框
+      // 延迟聚焦到新建的输入框（空标题的第一个）
       setTimeout(() => {
         const inputs = document.querySelectorAll('input[type="text"]');
-        const lastInput = inputs[inputs.length - 1] as HTMLInputElement;
-        if (lastInput) {
-          lastInput.focus();
+        // 找到第一个空值的输入框（就是新建的那个）
+        const emptyInput = Array.from(inputs).find(
+          (input) => (input as HTMLInputElement).value === ""
+        ) as HTMLInputElement;
+        if (emptyInput) {
+          emptyInput.focus();
         }
       }, 100);
     } catch (error) {
@@ -158,8 +194,27 @@ function App() {
     }
   };
 
-  const renderTodoItem = (note: Note, isPinned: boolean = false) => {
+  // TodoItem 组件（需要使用 useRef 所以提取为组件）
+  const TodoItem = ({ note, isPinned }: { note: Note; isPinned: boolean }) => {
+    const [localTitle, setLocalTitle] = useState(note.title);
     const composingRef = useRef(false);
+
+    // 同步外部变化到本地状态
+    useEffect(() => {
+      setLocalTitle(note.title);
+    }, [note.title]);
+
+    const handleLocalBlur = async () => {
+      // 失焦时才保存到数据库
+      if (localTitle.trim() !== note.title) {
+        await handleEditTitle(note, localTitle);
+      }
+
+      // 如果标题为空，删除这条待办
+      if (!localTitle.trim()) {
+        await handleDelete(note);
+      }
+    };
 
     return (
       <div
@@ -180,19 +235,17 @@ function App() {
         </button>
         <input
           type="text"
-          value={note.title}
+          value={localTitle}
           onChange={(e) => {
-            if (!composingRef.current) {
-              handleEditTitle(note, e.target.value);
-            }
+            setLocalTitle(e.target.value);
           }}
-          onBlur={() => handleBlur(note)}
+          onBlur={handleLocalBlur}
           onCompositionStart={() => {
             composingRef.current = true;
           }}
           onCompositionEnd={(e) => {
             composingRef.current = false;
-            handleEditTitle(note, (e.target as HTMLInputElement).value);
+            setLocalTitle((e.target as HTMLInputElement).value);
           }}
           className={`flex-1 bg-transparent border-none outline-none text-sm ${
             note.isCompleted
@@ -261,7 +314,7 @@ function App() {
                 <div className="text-xs text-gray-400 mb-2 px-1">📌 置顶</div>
                 <div className="space-y-2">
                   {sortWithNewFirst(pinnedNotes).map((note) => (
-                    <div key={note.id}>{renderTodoItem(note, true)}</div>
+                    <TodoItem key={note.id} note={note} isPinned={true} />
                   ))}
                 </div>
               </div>
@@ -273,7 +326,7 @@ function App() {
                 <div className="text-xs text-gray-400 mb-2 px-1">待办事项</div>
                 <div className="space-y-2">
                   {sortWithNewFirst(activeTodos).map((note) => (
-                    <div key={note.id}>{renderTodoItem(note, false)}</div>
+                    <TodoItem key={note.id} note={note} isPinned={false} />
                   ))}
                 </div>
               </div>
@@ -285,7 +338,7 @@ function App() {
                 <div className="text-xs text-gray-400 mb-2 px-1">✓ 已完成</div>
                 <div className="space-y-2">
                   {completedTodos.map((note) => (
-                    <div key={note.id}>{renderTodoItem(note, false)}</div>
+                    <TodoItem key={note.id} note={note} isPinned={false} />
                   ))}
                 </div>
               </div>
