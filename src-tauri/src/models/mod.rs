@@ -1,0 +1,47 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Note {
+    pub id: String,
+    pub title: String,
+    pub content: String,
+    pub is_todo: bool,
+    pub is_completed: bool,
+    pub color: Option<String>,
+    pub pinned: bool,
+    pub priority: i32,
+    pub tags: Vec<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub synced_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateNoteInput {
+    pub title: String,
+    pub content: String,
+    pub is_todo: bool,
+    pub tags: Vec<String>,
+    pub color: Option<String>,
+    pub priority: Option<i32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateNoteInput {
+    pub id: String,
+    pub title: Option<String>,
+    pub content: Option<String>,
+    pub is_todo: Option<bool>,
+    pub is_completed: Option<bool>,
+    pub color: Option<String>,
+    pub pinned: Option<bool>,
+    pub priority: Option<i32>,
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tag {
+    pub id: String,
+    pub name: String,
+    pub created_at: i64,
+}
