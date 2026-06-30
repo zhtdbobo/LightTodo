@@ -11,6 +11,7 @@ pub struct Note {
     pub pinned: bool,
     pub priority: i32,
     pub tags: Vec<String>,
+    pub group_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     pub synced_at: Option<i64>,
@@ -24,6 +25,8 @@ pub struct CreateNoteInput {
     pub tags: Vec<String>,
     pub color: Option<String>,
     pub priority: Option<i32>,
+    pub pinned: Option<bool>,
+    pub group_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -37,6 +40,7 @@ pub struct UpdateNoteInput {
     pub pinned: Option<bool>,
     pub priority: Option<i32>,
     pub tags: Option<Vec<String>>,
+    pub group_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,4 +48,24 @@ pub struct Tag {
     pub id: String,
     pub name: String,
     pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Group {
+    pub id: String,
+    pub name: String,
+    pub display_order: i32,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateGroupInput {
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateGroupInput {
+    pub id: String,
+    pub name: Option<String>,
+    pub display_order: Option<i32>,
 }

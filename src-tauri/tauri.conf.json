@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "LightTodo",
         "width": 320,
         "height": 480,
