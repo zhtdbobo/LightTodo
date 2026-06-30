@@ -128,6 +128,28 @@ impl Database {
             [],
         );
 
+        // 创建自定义分组表
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS groups (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                display_order INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_groups_order ON groups(display_order)",
+            [],
+        )?;
+
+        // 迁移：为 notes 表添加 group_id 列（如果不存在）
+        let _ = conn.execute(
+            "ALTER TABLE notes ADD COLUMN group_id TEXT",
+            [],
+        );
+
         Ok(())
     }
 

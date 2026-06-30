@@ -1,5 +1,5 @@
 use crate::database::Database;
-use crate::models::{CreateNoteInput, Note, Tag, UpdateNoteInput};
+use crate::models::{CreateNoteInput, Note, Tag, UpdateNoteInput, Group, CreateGroupInput, UpdateGroupInput};
 use rusqlite::{params, OptionalExtension};
 use std::sync::Arc;
 use tauri::State;
@@ -16,7 +16,7 @@ pub async fn get_all_notes(state: State<'_, AppState>) -> Result<Vec<Note>, Stri
     let mut stmt = conn
         .prepare(
             "SELECT id, title, content, is_todo, is_completed, color, pinned, priority,
-                    created_at, updated_at, synced_at
+                    created_at, updated_at, synced_at, group_id
              FROM notes
              ORDER BY pinned DESC, priority DESC, updated_at DESC",
         )
@@ -39,6 +39,7 @@ pub async fn get_all_notes(state: State<'_, AppState>) -> Result<Vec<Note>, Stri
                 created_at: row.get(8)?,
                 updated_at: row.get(9)?,
                 synced_at: row.get(10)?,
+                group_id: row.get(11)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -63,7 +64,7 @@ pub async fn get_note_by_id(id: String, state: State<'_, AppState>) -> Result<Op
     let mut stmt = conn
         .prepare(
             "SELECT id, title, content, is_todo, is_completed, color, pinned, priority,
-                    created_at, updated_at, synced_at
+                    created_at, updated_at, synced_at, group_id
              FROM notes WHERE id = ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -83,6 +84,7 @@ pub async fn get_note_by_id(id: String, state: State<'_, AppState>) -> Result<Op
                 created_at: row.get(8)?,
                 updated_at: row.get(9)?,
                 synced_at: row.get(10)?,
+                group_id: row.get(11)?,
             })
         })
         .optional()
@@ -104,20 +106,23 @@ pub async fn create_note(input: CreateNoteInput, state: State<'_, AppState>) -> 
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
     let priority = input.priority.unwrap_or(0);
+    let pinned = input.pinned.unwrap_or(false);
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     tx.execute(
-        "INSERT INTO notes (id, title, content, is_todo, is_completed, color, pinned, priority, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, 0, ?5, 0, ?6, ?7, ?7)",
+        "INSERT INTO notes (id, title, content, is_todo, is_completed, color, pinned, priority, created_at, updated_at, group_id)
+         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, ?8, ?9)",
         params![
             &id,
             &input.title,
             &input.content,
             input.is_todo as i64,
             &input.color,
+            pinned as i64,
             priority,
             now,
+            &input.group_id,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -136,9 +141,10 @@ pub async fn create_note(input: CreateNoteInput, state: State<'_, AppState>) -> 
         is_todo: input.is_todo,
         is_completed: false,
         color: input.color,
-        pinned: false,
+        pinned,
         priority,
         tags: input.tags,
+        group_id: input.group_id,
         created_at: now,
         updated_at: now,
         synced_at: None,
@@ -187,6 +193,10 @@ pub async fn update_note(input: UpdateNoteInput, state: State<'_, AppState>) -> 
             update_count += 1;
             updates.push(format!("priority = ?{}", update_count));
         }
+        if input.group_id.is_some() {
+            update_count += 1;
+            updates.push(format!("group_id = ?{}", update_count));
+        }
 
         let sql = format!(
             "UPDATE notes SET {} WHERE id = ?{}",
@@ -228,6 +238,10 @@ pub async fn update_note(input: UpdateNoteInput, state: State<'_, AppState>) -> 
             }
             if let Some(priority) = input.priority {
                 stmt.raw_bind_parameter(param_index, priority as i64).map_err(|e| e.to_string())?;
+                param_index += 1;
+            }
+            if let Some(ref group_id) = input.group_id {
+                stmt.raw_bind_parameter(param_index, group_id).map_err(|e| e.to_string())?;
                 param_index += 1;
             }
             stmt.raw_bind_parameter(param_index, &input.id).map_err(|e| e.to_string())?;
@@ -274,7 +288,7 @@ pub async fn search_notes(query: String, state: State<'_, AppState>) -> Result<V
     let mut stmt = conn
         .prepare(
             "SELECT id, title, content, is_todo, is_completed, color, pinned, priority,
-                    created_at, updated_at, synced_at
+                    created_at, updated_at, synced_at, group_id
              FROM notes
              WHERE title LIKE ?1 OR content LIKE ?1
              ORDER BY pinned DESC, priority DESC, updated_at DESC",
@@ -296,6 +310,7 @@ pub async fn search_notes(query: String, state: State<'_, AppState>) -> Result<V
                 created_at: row.get(8)?,
                 updated_at: row.get(9)?,
                 synced_at: row.get(10)?,
+                group_id: row.get(11)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -379,6 +394,140 @@ fn insert_tag_for_note(
         "INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES (?1, ?2)",
         params![note_id, &tag_id],
     )?;
+
+    Ok(())
+}
+
+// 分组管理命令
+#[tauri::command]
+pub async fn get_all_groups(state: State<'_, AppState>) -> Result<Vec<Group>, String> {
+    let conn = state.db.get_connection();
+    let conn = conn.lock();
+
+    let mut stmt = conn
+        .prepare("SELECT id, name, display_order, created_at FROM groups ORDER BY display_order")
+        .map_err(|e| e.to_string())?;
+
+    let groups = stmt
+        .query_map([], |row| {
+            Ok(Group {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                display_order: row.get::<_, i64>(2)? as i32,
+                created_at: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(groups)
+}
+
+#[tauri::command]
+pub async fn create_group(input: CreateGroupInput, state: State<'_, AppState>) -> Result<Group, String> {
+    let conn = state.db.get_connection();
+    let conn = conn.lock();
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().timestamp();
+
+    // 获取当前最大的 display_order
+    let max_order: i32 = conn
+        .query_row("SELECT COALESCE(MAX(display_order), -1) FROM groups", [], |row| {
+            row.get::<_, i64>(0).map(|v| v as i32)
+        })
+        .unwrap_or(-1);
+
+    let display_order = max_order + 1;
+
+    conn.execute(
+        "INSERT INTO groups (id, name, display_order, created_at) VALUES (?1, ?2, ?3, ?4)",
+        params![&id, &input.name, display_order, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(Group {
+        id,
+        name: input.name,
+        display_order,
+        created_at: now,
+    })
+}
+
+#[tauri::command]
+pub async fn update_group(input: UpdateGroupInput, state: State<'_, AppState>) -> Result<Group, String> {
+    let conn = state.db.get_connection();
+    let conn = conn.lock();
+
+    let mut updates = Vec::new();
+    let mut update_count = 0;
+
+    if input.name.is_some() {
+        update_count += 1;
+        updates.push(format!("name = ?{}", update_count));
+    }
+    if input.display_order.is_some() {
+        update_count += 1;
+        updates.push(format!("display_order = ?{}", update_count));
+    }
+
+    if updates.is_empty() {
+        return Err("No fields to update".to_string());
+    }
+
+    let sql = format!(
+        "UPDATE groups SET {} WHERE id = ?{}",
+        updates.join(", "),
+        update_count + 1
+    );
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let mut param_index = 1;
+
+    if let Some(ref name) = input.name {
+        stmt.raw_bind_parameter(param_index, name).map_err(|e| e.to_string())?;
+        param_index += 1;
+    }
+    if let Some(display_order) = input.display_order {
+        stmt.raw_bind_parameter(param_index, display_order as i64).map_err(|e| e.to_string())?;
+        param_index += 1;
+    }
+    stmt.raw_bind_parameter(param_index, &input.id).map_err(|e| e.to_string())?;
+
+    stmt.raw_execute().map_err(|e| e.to_string())?;
+
+    // 查询更新后的分组
+    let group = conn
+        .query_row(
+            "SELECT id, name, display_order, created_at FROM groups WHERE id = ?1",
+            [&input.id],
+            |row| {
+                Ok(Group {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    display_order: row.get::<_, i64>(2)? as i32,
+                    created_at: row.get(3)?,
+                })
+            },
+        )
+        .map_err(|e| e.to_string())?;
+
+    Ok(group)
+}
+
+#[tauri::command]
+pub async fn delete_group(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let conn = state.db.get_connection();
+    let conn = conn.lock();
+
+    // 将该分组下的所有待办的 group_id 设为 NULL
+    conn.execute("UPDATE notes SET group_id = NULL WHERE group_id = ?1", [&id])
+        .map_err(|e| e.to_string())?;
+
+    // 删除分组
+    conn.execute("DELETE FROM groups WHERE id = ?1", [&id])
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }

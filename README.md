@@ -8,10 +8,13 @@
 - ✅ **待办管理** - 创建、编辑、删除待办，支持完成状态切换
 - 📝 **多行支持** - 待办内容支持多行输入（Shift+Enter 换行）
 - 🎯 **优先级** - 三级优先级标记（高🔴、中🟡、低⚪）
-- 📌 **窗口置顶** - 小窗口始终在最前，方便随时查看
-- 🖥️ **系统托盘** - 隐藏到托盘运行，右键菜单快速操作
+- 📁 **自定义分组** - 创建、重命名、删除分组，待办可移动到不同分组
+- 📌 **置顶功能** - 支持待办置顶，重要事项优先显示
+- 🖥️ **窗口置顶** - 小窗口始终在最前，方便随时查看
+- 🗂️ **系统托盘** - 隐藏到托盘运行，右键菜单快速操作
 - ☁️ **WebDAV 同步** - 支持坚果云、Nextcloud 等 WebDAV 云存储同步
 - 🔄 **智能同步** - 双向同步、上传、下载三种模式，智能合并数据
+- ⏰ **自动同步** - 启动时自动同步，支持定时后台同步（每 5 分钟）
 - 🎨 **简洁设计** - 极简界面，专注于待办本身
 - 💾 **自动保存** - 编辑后自动保存，无需手动操作
 - 📱 **跨平台** - 支持 Windows、macOS、Linux
@@ -88,12 +91,14 @@ npm run tauri build
 #### 创建待办
 1. 点击右上角 **+** 按钮
 2. 输入待办内容
-3. 自动保存（失焦后生效）
-4. 如果不输入内容直接失焦，待办会自动删除
+3. 按 **Enter** 键保存当前待办并创建下一条（支持连续输入）
+4. 自动保存（失焦后生效）
+5. 如果不输入内容直接失焦，待办会自动删除
 
 #### 编辑待办
 - 直接点击待办文本即可编辑
 - 修改后失焦自动保存
+- 按 **Enter** 键快速创建下一条待办
 
 #### 切换优先级
 - 点击待办左侧的圆圈图标
@@ -103,10 +108,16 @@ npm run tauri build
 #### 完成待办
 - 点击待办左侧的复选框
 - 已完成的待办会移到底部 "✓ 已完成" 区域
+- 在已完成的待办上点击 **⋯** 可选择"恢复"或"删除"
 
 #### 删除待办
-- 鼠标悬停在待办上，点击右侧出现的 **✕** 按钮
-- 直接删除，无需二次确认
+- 鼠标点击待办右侧的 **⋯** 按钮，选择"删除"
+- 或者将待办内容清空后失焦，会自动删除
+
+#### 置顶待办
+- 点击待办右侧的 **⋯** 按钮，选择"置顶"
+- 置顶的待办会显示在顶部的"📌 置顶"区域
+- 再次点击可取消置顶
 
 #### 窗口置顶
 - 点击左上角的 📌 图标切换窗口置顶状态
@@ -122,9 +133,16 @@ npm run tauri build
 
 ### 待办分组
 
-- **📌 置顶** - 置顶的待办（优先显示）
-- **未完成** - 未完成的待办，按优先级排序
+- **📌 置顶** - 通过右键菜单置顶的待办（优先显示）
+- **自定义分组** - 创建自己的分组（双击分组名可重命名，悬停显示删除按钮）
+- **未完成** - 未分组的待办，按优先级排序
 - **✓ 已完成** - 已完成的待办
+
+#### 分组操作
+- **创建分组**：在待办的右键菜单中选择"移动到" → 输入新分组名 → 创建
+- **重命名分组**：双击分组名称进行编辑
+- **删除分组**：鼠标悬停在分组名称上，点击右侧的 **✕** 按钮（分组内的待办会移至"未完成"）
+- **移动待办**：点击待办右侧的 **⋯** 按钮 → "移动到" → 选择目标分组
 
 ### WebDAV 同步
 
@@ -190,6 +208,7 @@ npm run tauri build
 ### 数据库结构
 
 ```sql
+-- 待办表
 CREATE TABLE notes (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -199,9 +218,37 @@ CREATE TABLE notes (
   color TEXT,
   pinned INTEGER NOT NULL DEFAULT 0,
   priority INTEGER NOT NULL DEFAULT 0,  -- 0=低, 1=中, 2=高
+  group_id TEXT,                         -- 所属分组ID
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   synced_at INTEGER
+);
+
+-- 分组表
+CREATE TABLE groups (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  display_order INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+-- 标签表（预留功能）
+CREATE TABLE tags (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL
+);
+
+-- WebDAV 配置表
+CREATE TABLE webdav_config (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  url TEXT NOT NULL,
+  username TEXT NOT NULL,
+  password TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  auto_sync INTEGER NOT NULL DEFAULT 0,
+  directory TEXT NOT NULL DEFAULT 'LightTodo',
+  last_sync INTEGER
 );
 ```
 
@@ -235,6 +282,8 @@ CREATE TABLE notes (
 - [x] 自动保存
 - [x] 简洁 UI 界面
 - [x] 中文输入支持（关闭透明窗口）
+- [x] Enter 键快速创建待办（连续输入）
+- [x] 窗口位置和大小记忆
 
 ### v0.2.0 - WebDAV 同步 ✅
 - [x] WebDAV 配置界面
@@ -247,10 +296,11 @@ CREATE TABLE notes (
 - [x] 多行待办支持
 - [x] 删除同步（删除本地待办后自动删除云端文件）
 - [x] 自动同步开关（启动时自动同步）
-- [ ] 定时自动同步（每 N 分钟）
+- [x] 定时自动同步（每 5 分钟）
+- [x] 待办项置顶功能
+- [x] 自定义分组功能
 - [ ] 冲突检测与处理（版本控制）
 - [ ] 离线队列
-- [ ] 待办项置顶功能
 - [ ] 透明窗口 + IME 兼容（等待 Tauri 修复）
 
 ### v0.3.0 - 增强功能
@@ -260,6 +310,7 @@ CREATE TABLE notes (
 - [ ] 深色模式
 - [ ] 导入/导出 JSON
 - [ ] 待办回收站
+- [ ] 子任务支持
 
 ### v1.0.0 - 正式版
 - [ ] 提醒功能（桌面通知）
@@ -303,17 +354,23 @@ CREATE TABLE notes (
 LightTodo/
 ├── src/                      # React 前端代码
 │   ├── features/            # 功能模块
-│   │   └── notes/          # 待办功能
-│   │       ├── hooks/      # API hooks
-│   │       ├── stores/     # Zustand 状态管理
-│   │       └── types/      # TypeScript 类型
+│   │   ├── notes/          # 待办功能
+│   │   │   ├── hooks/      # API hooks (useNotes.ts, useGroups.ts)
+│   │   │   ├── stores/     # Zustand 状态管理
+│   │   │   └── types/      # TypeScript 类型定义
+│   │   └── sync/           # WebDAV 同步功能
+│   │       ├── api.ts      # 同步 API 调用
+│   │       └── WebDAVSettings.tsx  # 设置界面
 │   ├── App.tsx             # 主应用组件
 │   └── main.tsx            # 入口文件
 ├── src-tauri/               # Rust 后端代码
 │   ├── src/
-│   │   ├── commands/       # Tauri 命令
-│   │   ├── database/       # SQLite 数据库
-│   │   └── main.rs         # Rust 入口
+│   │   ├── commands/       # Tauri 命令 (CRUD 操作)
+│   │   ├── database/       # SQLite 数据库初始化
+│   │   ├── models/         # 数据模型定义
+│   │   ├── webdav.rs       # WebDAV 客户端实现
+│   │   ├── sync.rs         # 同步逻辑
+│   │   └── main.rs         # Rust 入口 + 托盘配置
 │   ├── tauri.conf.json     # Tauri 配置
 │   └── Cargo.toml          # Rust 依赖
 ├── public/                  # 静态资源

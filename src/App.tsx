@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { useNotesStore } from "./features/notes/stores/notesStore";
 import { getAllNotes, createNote, updateNote, deleteNote } from "./features/notes/hooks/useNotes";
-import type { Note } from "./features/notes/types";
+import { getAllGroups, createGroup, deleteGroup } from "./features/notes/hooks/useGroups";
+import type { Note, Group } from "./features/notes/types";
 import { Window } from "@tauri-apps/api/window";
 import { WebDAVSettings } from "./features/sync/WebDAVSettings";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { syncNotes } from "./features/sync/api";
 
 const openSettingsWindow = async () => {
@@ -46,6 +46,7 @@ const openSettingsWindow = async () => {
 
 function App() {
   const { notes, setNotes, addNote, updateNoteInStore, removeNote } = useNotesStore();
+  const [groups, setGroups] = useState<Group[]>([]);
   const [isWindowPinned, setIsWindowPinned] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
@@ -64,6 +65,7 @@ function App() {
     if (!hasInitialized.current) {
       hasInitialized.current = true;
       loadNotes();
+      loadGroups();
       checkWindowPinned();
       // 启动时自动同步
       autoSyncOnStartup();
@@ -155,6 +157,26 @@ function App() {
     }
   };
 
+  const loadGroups = async () => {
+    try {
+      const allGroups = await getAllGroups();
+      setGroups(allGroups);
+    } catch (error) {
+      console.error("Failed to load groups:", error);
+    }
+  };
+
+  const handleRenameGroup = async (groupId: string, newName: string) => {
+    if (!newName.trim()) return;
+    try {
+      const { updateGroup } = await import('./features/notes/hooks/useGroups');
+      await updateGroup({ id: groupId, name: newName });
+      loadGroups();
+    } catch (error) {
+      console.error("Failed to rename group:", error);
+    }
+  };
+
   // 检查窗口是否置顶
   const checkWindowPinned = async () => {
     try {
@@ -192,23 +214,25 @@ function App() {
   };
 
   // 创建新便签
-  const handleCreateNote = async () => {
+  const handleCreateNote = async (forceCreate: boolean = false) => {
     console.log("Creating note...");
 
-    // 先检查是否已有空标题的待办
-    const emptyNote = notes.find(n => !n.title.trim() && !n.isCompleted);
-    if (emptyNote) {
-      // 如果已有空待办，直接聚焦到它
-      setTimeout(() => {
-        const textareas = document.querySelectorAll('textarea');
-        const emptyTextarea = Array.from(textareas).find(
-          (textarea) => (textarea as HTMLTextAreaElement).value === ""
-        ) as HTMLTextAreaElement;
-        if (emptyTextarea) {
-          emptyTextarea.focus();
-        }
-      }, 50);
-      return;
+    // 先检查是否已有空标题的待办（只在点击 + 按钮时检查，回车时强制创建）
+    if (!forceCreate) {
+      const emptyNote = notes.find(n => !n.title.trim() && !n.isCompleted);
+      if (emptyNote) {
+        // 如果已有空待办，直接聚焦到它
+        setTimeout(() => {
+          const textareas = document.querySelectorAll('textarea');
+          const emptyTextarea = Array.from(textareas).find(
+            (textarea) => (textarea as HTMLTextAreaElement).value === ""
+          ) as HTMLTextAreaElement;
+          if (emptyTextarea) {
+            emptyTextarea.focus();
+          }
+        }, 50);
+        return;
+      }
     }
 
     try {
@@ -300,14 +324,22 @@ function App() {
     }
   };
 
-  // 分组：置顶、未完成、已完成
+  // 分组：置顶、自定义分组、未完成、已完成
   const pinnedNotes = notes
     .filter((n) => n.pinned && !n.isCompleted)
     .sort((a, b) => b.priority - a.priority);
   const activeTodos = notes
-    .filter((n) => !n.pinned && !n.isCompleted)
+    .filter((n) => !n.pinned && !n.isCompleted && !n.groupId)
     .sort((a, b) => b.priority - a.priority);
   const completedTodos = notes.filter((n) => n.isCompleted);
+
+  // 按分组分类待办
+  const groupedNotes = groups.map((group) => ({
+    group,
+    notes: notes
+      .filter((n) => n.groupId === group.id && !n.isCompleted)
+      .sort((a, b) => b.priority - a.priority),
+  }));
 
   // 将新建的空待办放到最前面
   const sortWithNewFirst = (items: typeof notes) => {
@@ -325,15 +357,129 @@ function App() {
     }
   };
 
+  // GroupTitle 组件 - 支持双击编辑
+  const GroupTitle = ({
+    group,
+    onRename,
+    onDelete,
+    onAdd
+  }: {
+    group: Group;
+    onRename: (id: string, name: string) => void;
+    onDelete: () => void;
+    onAdd: () => void;
+  }) => {
+    const [isEditing, setIsEditing] = useState(false);
+    const [editName, setEditName] = useState(group.name);
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+      if (isEditing && inputRef.current) {
+        inputRef.current.focus();
+        inputRef.current.select();
+      }
+    }, [isEditing]);
+
+    const handleSave = () => {
+      if (editName.trim() && editName !== group.name) {
+        onRename(group.id, editName.trim());
+      } else {
+        setEditName(group.name);
+      }
+      setIsEditing(false);
+    };
+
+    return (
+      <div className="text-xs text-gray-400 mb-2 flex items-center justify-between group">
+        {isEditing ? (
+          <input
+            ref={inputRef}
+            type="text"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onBlur={handleSave}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                handleSave();
+              } else if (e.key === 'Escape') {
+                setEditName(group.name);
+                setIsEditing(false);
+              }
+            }}
+            className="flex-1 bg-white border border-cyan-400 rounded px-1 py-0.5 text-gray-700 outline-none"
+          />
+        ) : (
+          <span
+            onDoubleClick={() => setIsEditing(true)}
+            className="cursor-pointer hover:text-gray-600"
+            title="双击编辑"
+          >
+            {group.name}
+          </span>
+        )}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onAdd}
+            className="opacity-0 group-hover:opacity-100 text-cyan-400 hover:text-cyan-500 text-sm transition-opacity"
+            title="新建待办"
+          >
+            +
+          </button>
+          <button
+            onClick={onDelete}
+            className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-500 text-xs transition-opacity"
+            title="删除分组"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   // TodoItem 组件（需要使用 useRef 所以提取为组件）
-  const TodoItem = ({ note, isPinned }: { note: Note; isPinned: boolean }) => {
+  const TodoItem = ({ note }: { note: Note }) => {
     const [localTitle, setLocalTitle] = useState(note.title);
     const composingRef = useRef(false);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const [showMenu, setShowMenu] = useState(false);
+    const [showGroupInput, setShowGroupInput] = useState(false);
+    const [newGroupName, setNewGroupName] = useState("");
+    const menuRef = useRef<HTMLDivElement>(null);
+
+    // 点击外部关闭菜单
+    useEffect(() => {
+      const handleClickOutside = (event: MouseEvent) => {
+        if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+          setShowMenu(false);
+          setShowGroupInput(false);
+        }
+      };
+
+      if (showMenu) {
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+      }
+    }, [showMenu]);
+
+    // 自动调整 textarea 高度的函数
+    const adjustHeight = () => {
+      const textarea = textareaRef.current;
+      if (textarea) {
+        textarea.style.height = 'auto';
+        textarea.style.height = textarea.scrollHeight + 'px';
+      }
+    };
 
     // 同步外部变化到本地状态
     useEffect(() => {
       setLocalTitle(note.title);
     }, [note.title]);
+
+    // 当内容变化时调整高度
+    useEffect(() => {
+      adjustHeight();
+    }, [localTitle, note.title]);
 
     const handleLocalBlur = async () => {
       // 失焦时才保存到数据库
@@ -347,11 +493,37 @@ function App() {
       }
     };
 
-    const showPinButton = !note.isCompleted;
+    const handleMoveToGroup = async (groupId: string | null) => {
+      try {
+        const updated = await updateNote({
+          id: note.id,
+          groupId: groupId ?? undefined,
+          pinned: false, // 移动到分组时取消置顶
+        });
+        updateNoteInStore(updated);
+        setShowMenu(false);
+        setShowGroupInput(false);
+      } catch (error) {
+        console.error("Failed to move to group:", error);
+      }
+    };
+
+    const handleCreateAndMoveToGroup = async () => {
+      if (!newGroupName.trim()) return;
+
+      try {
+        const newGroup = await createGroup({ name: newGroupName });
+        setGroups([...groups, newGroup]);
+        await handleMoveToGroup(newGroup.id);
+        setNewGroupName("");
+      } catch (error) {
+        console.error("Failed to create group:", error);
+      }
+    };
 
     return (
       <div
-        className={`flex items-start gap-2.5 py-1.5 group ${isPinned ? 'bg-cyan-50/30 rounded px-2' : ''}`}
+        className={`flex items-start gap-2.5 py-1 group relative`}
       >
         <input
           type="checkbox"
@@ -367,12 +539,12 @@ function App() {
           {getPriorityEmoji(note.priority) || "⚪"}
         </button>
         <textarea
+          ref={textareaRef}
           value={localTitle}
           onChange={(e) => {
             setLocalTitle(e.target.value);
             // 自动调整高度
-            e.target.style.height = 'auto';
-            e.target.style.height = e.target.scrollHeight + 'px';
+            adjustHeight();
           }}
           onBlur={handleLocalBlur}
           onCompositionStart={() => {
@@ -382,12 +554,26 @@ function App() {
             composingRef.current = false;
             setLocalTitle((e.target as HTMLTextAreaElement).value);
           }}
-          onKeyDown={(e) => {
-            // Enter 键创建新待办（不换行）
+          onKeyDown={async (e) => {
+            // Enter 键保存当前待办并创建新待办（不换行）
             if (e.key === 'Enter' && !e.shiftKey && !composingRef.current) {
               e.preventDefault();
-              handleLocalBlur();
-              handleCreateNote();
+
+              const currentContent = localTitle.trim();
+
+              // 如果当前待办为空，强制创建新待办
+              if (!currentContent) {
+                await handleCreateNote(true);
+                return;
+              }
+
+              // 先保存当前待办（如果有修改）
+              if (currentContent !== note.title) {
+                await handleEditTitle(note, localTitle);
+              }
+
+              // 强制创建新待办
+              await handleCreateNote(true);
             }
           }}
           className={`flex-1 bg-transparent border-none outline-none text-sm resize-none overflow-hidden ${
@@ -401,24 +587,124 @@ function App() {
           rows={1}
           style={{ minHeight: '20px' }}
         />
-        {showPinButton && (
+
+        {/* 三点菜单按钮 */}
+        <div className="relative flex-shrink-0" ref={menuRef}>
           <button
-            onClick={() => handleTogglePinned(note)}
-            className={`opacity-0 group-hover:opacity-100 text-sm transition flex-shrink-0 ${
-              note.pinned ? 'text-cyan-500' : 'text-gray-300 hover:text-cyan-400'
-            }`}
-            title={note.pinned ? "取消置顶" : "置顶"}
+            onClick={() => setShowMenu(!showMenu)}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600 text-sm transition"
+            title="更多操作"
           >
-            {note.pinned ? "📌" : "📍"}
+            ⋯
           </button>
-        )}
-        <button
-          onClick={() => handleDelete(note)}
-          className="opacity-0 group-hover:opacity-100 text-cyan-300 hover:text-cyan-400 text-sm transition flex-shrink-0"
-          title="删除"
-        >
-          ✕
-        </button>
+
+          {/* 下拉菜单 */}
+          {showMenu && (
+            <div className="absolute right-0 top-6 bg-white border border-gray-200 rounded-md shadow-lg py-0.5 z-50 min-w-[100px] text-xs">
+              {note.isCompleted ? (
+                <>
+                  <button
+                    onClick={() => {
+                      handleToggleCompleted(note);
+                      setShowMenu(false);
+                    }}
+                    className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700"
+                  >
+                    恢复
+                  </button>
+                  <div className="border-t border-gray-100"></div>
+                  <button
+                    onClick={() => {
+                      handleDelete(note);
+                      setShowMenu(false);
+                    }}
+                    className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-red-600"
+                  >
+                    删除
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => {
+                      handleTogglePinned(note);
+                      setShowMenu(false);
+                    }}
+                    className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700"
+                  >
+                    {note.pinned ? "取消置顶" : "置顶"}
+                  </button>
+
+                  {/* 移动到分组 */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowGroupInput(!showGroupInput)}
+                      className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700 flex items-center justify-between"
+                    >
+                      <span>移动到</span>
+                      <span className="text-gray-400">◂</span>
+                    </button>
+
+                    {/* 分组子菜单 - 弹出到左侧 */}
+                    {showGroupInput && (
+                      <div className="absolute right-full top-0 mr-0.5 bg-white border border-gray-200 rounded-md shadow-lg py-0.5 min-w-[120px]">
+                        <button
+                          onClick={() => handleMoveToGroup(null)}
+                          className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700"
+                        >
+                          无分组
+                        </button>
+                        {groups.map((group) => (
+                          <button
+                            key={group.id}
+                            onClick={() => handleMoveToGroup(group.id)}
+                            className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700"
+                          >
+                            {group.name}
+                          </button>
+                        ))}
+                        <div className="border-t border-gray-100 my-0.5"></div>
+                        <div className="px-2 py-1.5">
+                          <input
+                            type="text"
+                            value={newGroupName}
+                            onChange={(e) => setNewGroupName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleCreateAndMoveToGroup();
+                              }
+                            }}
+                            placeholder="新分组..."
+                            className="w-full px-2 py-1 text-xs border border-gray-300 rounded"
+                            autoFocus
+                          />
+                          <button
+                            onClick={handleCreateAndMoveToGroup}
+                            className="w-full mt-1 px-2 py-1 text-xs bg-cyan-400 text-white rounded hover:bg-cyan-500"
+                          >
+                            创建
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="border-t border-gray-100"></div>
+                  <button
+                    onClick={() => {
+                      handleDelete(note);
+                      setShowMenu(false);
+                    }}
+                    className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-red-600"
+                  >
+                    删除
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     );
   };
@@ -486,22 +772,121 @@ function App() {
             {/* 置顶区域 */}
             {pinnedNotes.length > 0 && (
               <div className="mb-4">
-                <div className="text-xs text-gray-400 mb-2 px-1">📌 置顶</div>
-                <div className="space-y-2">
+                <div className="text-xs text-gray-400 mb-2 flex items-center justify-between group">
+                  <span>置顶</span>
+                  <button
+                    onClick={async () => {
+                      const newNote = await createNote({
+                        title: "",
+                        content: "",
+                        isTodo: true,
+                        tags: [],
+                        priority: 0,
+                        pinned: true, // 新建时直接置顶
+                      });
+                      addNote(newNote);
+                      setTimeout(() => {
+                        const textareas = document.querySelectorAll('textarea');
+                        const emptyTextarea = Array.from(textareas).find(
+                          (textarea) => (textarea as HTMLTextAreaElement).value === ""
+                        ) as HTMLTextAreaElement;
+                        if (emptyTextarea) {
+                          emptyTextarea.focus();
+                        }
+                      }, 100);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 text-cyan-400 hover:text-cyan-500 text-sm transition-opacity"
+                    title="新建置顶待办"
+                  >
+                    +
+                  </button>
+                </div>
+                <div className="space-y-0.5 bg-cyan-50/20 rounded-lg p-2">
                   {sortWithNewFirst(pinnedNotes).map((note) => (
-                    <TodoItem key={note.id} note={note} isPinned={true} />
+                    <TodoItem key={note.id} note={note} />
                   ))}
                 </div>
               </div>
             )}
 
+            {/* 自定义分组 */}
+            {groupedNotes.map(({ group, notes: groupNotes }) => (
+              groupNotes.length > 0 && (
+                <div key={group.id} className="mb-4">
+                  <GroupTitle
+                    group={group}
+                    onRename={handleRenameGroup}
+                    onDelete={async () => {
+                      if (confirm(`确定删除分组"${group.name}"？分组内的待办将移至未完成。`)) {
+                        await deleteGroup(group.id);
+                        loadGroups();
+                        loadNotes();
+                      }
+                    }}
+                    onAdd={async () => {
+                      const newNote = await createNote({
+                        title: "",
+                        content: "",
+                        isTodo: true,
+                        tags: [],
+                        priority: 0,
+                        groupId: group.id,
+                      });
+                      addNote(newNote);
+                      setTimeout(() => {
+                        const textareas = document.querySelectorAll('textarea');
+                        const emptyTextarea = Array.from(textareas).find(
+                          (textarea) => (textarea as HTMLTextAreaElement).value === ""
+                        ) as HTMLTextAreaElement;
+                        if (emptyTextarea) {
+                          emptyTextarea.focus();
+                        }
+                      }, 100);
+                    }}
+                  />
+                  <div className="space-y-0.5">
+                    {sortWithNewFirst(groupNotes).map((note) => (
+                      <TodoItem key={note.id} note={note} />
+                    ))}
+                  </div>
+                </div>
+              )
+            ))}
+
             {/* 未完成待办 */}
             {activeTodos.length > 0 && (
               <div className="mb-4">
-                <div className="text-xs text-gray-400 mb-2 px-1">未完成</div>
-                <div className="space-y-2">
+                <div className="text-xs text-gray-400 mb-2 flex items-center justify-between group">
+                  <span>未完成</span>
+                  <button
+                    onClick={async () => {
+                      const newNote = await createNote({
+                        title: "",
+                        content: "",
+                        isTodo: true,
+                        tags: [],
+                        priority: 0,
+                      });
+                      addNote(newNote);
+                      setTimeout(() => {
+                        const textareas = document.querySelectorAll('textarea');
+                        const emptyTextarea = Array.from(textareas).find(
+                          (textarea) => (textarea as HTMLTextAreaElement).value === ""
+                        ) as HTMLTextAreaElement;
+                        if (emptyTextarea) {
+                          emptyTextarea.focus();
+                        }
+                      }, 100);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 text-cyan-400 hover:text-cyan-500 text-sm transition-opacity"
+                    title="新建待办"
+                  >
+                    +
+                  </button>
+                </div>
+                <div className="space-y-0.5">
                   {sortWithNewFirst(activeTodos).map((note) => (
-                    <TodoItem key={note.id} note={note} isPinned={false} />
+                    <TodoItem key={note.id} note={note} />
                   ))}
                 </div>
               </div>
@@ -510,10 +895,10 @@ function App() {
             {/* 已完成 */}
             {completedTodos.length > 0 && (
               <div>
-                <div className="text-xs text-gray-400 mb-2 px-1">已完成</div>
+                <div className="text-xs text-gray-400 mb-2">已完成</div>
                 <div className="space-y-2">
                   {completedTodos.map((note) => (
-                    <TodoItem key={note.id} note={note} isPinned={false} />
+                    <TodoItem key={note.id} note={note} />
                   ))}
                 </div>
               </div>
