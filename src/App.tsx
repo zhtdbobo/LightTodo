@@ -7,6 +7,11 @@ import { Window } from "@tauri-apps/api/window";
 import { WebDAVSettings } from "./features/sync/WebDAVSettings";
 import { syncNotes } from "./features/sync/api";
 
+// 仅在开发模式下导入 react-grab
+const initReactGrab = import.meta.env.DEV
+  ? (await import("react-grab")).init
+  : null;
+
 const openSettingsWindow = async () => {
   try {
     // 检查窗口是否已存在
@@ -50,15 +55,65 @@ function App() {
   const [isWindowPinned, setIsWindowPinned] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
+  const [showSyncMenu, setShowSyncMenu] = useState(false);
   const hasInitialized = useRef(false);
   const autoSyncInterval = useRef<number | null>(null);
+  const grabApiRef = useRef<any>(null);
+  const syncMenuRef = useRef<HTMLDivElement>(null);
 
   // 检查是否是设置页面
   useEffect(() => {
     if (window.location.hash === "#settings") {
       setShowSettings(true);
     }
+
+    // 仅在开发模式下初始化 react-grab
+    if (import.meta.env.DEV && initReactGrab) {
+      const initGrab = async () => {
+        try {
+          if (!grabApiRef.current) {
+            const api = initReactGrab({
+              activationMode: 'manual' as any,
+            });
+            grabApiRef.current = api;
+            console.log('react-grab initialized:', api);
+            console.log('Available methods:', Object.keys(api || {}));
+          }
+        } catch (error) {
+          console.error('Failed to initialize react-grab:', error);
+        }
+      };
+      initGrab();
+    }
   }, []);
+
+  // 点击外部关闭同步菜单
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (syncMenuRef.current && !syncMenuRef.current.contains(event.target as Node)) {
+        setShowSyncMenu(false);
+      }
+    };
+
+    if (showSyncMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showSyncMenu]);
+
+  // 点击外部关闭同步菜单
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (syncMenuRef.current && !syncMenuRef.current.contains(event.target as Node)) {
+        setShowSyncMenu(false);
+      }
+    };
+
+    if (showSyncMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showSyncMenu]);
 
   // 加载便签
   useEffect(() => {
@@ -716,9 +771,9 @@ function App() {
           <WebDAVSettings />
         </div>
       ) : (
-        <div className="h-screen flex flex-col bg-white rounded-lg shadow-2xl">
+        <div className="h-screen w-screen flex flex-col bg-white rounded-lg shadow-2xl">
           {/* 可拖拽的顶部区域 */}
-          <div className="flex items-center justify-between px-4 py-3 select-none" data-tauri-drag-region>
+          <div className="flex items-center justify-between px-4 py-3 select-none flex-shrink-0" data-tauri-drag-region>
         <div className="flex items-center gap-2">
           <button
             onClick={(e) => {
@@ -735,6 +790,17 @@ function App() {
           </button>
           <h1 className="text-sm font-medium text-gray-600">待办</h1>
         </div>
+
+        {/* 时间水印 - 居中 */}
+        <div className="absolute left-1/2 transform -translate-x-1/2 text-[10px] text-gray-400">
+          {new Date().toLocaleString("zh-CN", {
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+        </div>
+
         <div className="flex items-center gap-3">
           <button
             onClick={(e) => {
@@ -762,7 +828,7 @@ function App() {
       </div>
 
       {/* 待办列表区域 */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 pb-4">
         {notes.length === 0 ? (
           <div className="text-center text-gray-300 text-xs py-16">
             <p>点击 + 创建待办</p>
@@ -907,94 +973,104 @@ function App() {
         )}
       </div>
 
-      {/* 底部时间水印 */}
-      <div className="text-center text-[10px] text-gray-200 py-2">
-        {new Date().toLocaleString("zh-CN", {
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-        })}
-      </div>
-
       {/* 底部按钮区域 */}
-      <div className="flex items-center justify-between px-4 py-2 border-t border-gray-100">
-        <button
-          onClick={async (e) => {
-            e.stopPropagation();
-            await openSettingsWindow();
-          }}
-          className="text-gray-400 hover:text-cyan-400 text-base transition-colors cursor-pointer"
-          title="设置"
-          style={{ WebkitAppRegion: 'no-drag' } as any}
-        >
-          ⚙️
-        </button>
+      <div className="flex items-center justify-between px-4 py-2 border-t border-gray-100 flex-shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={async (e) => {
               e.stopPropagation();
-              try {
-                const { pullNotes } = await import('./features/sync/api');
-                const result = await pullNotes();
-                setSyncMessage(result);
-                setTimeout(() => {
-                  setSyncMessage("");
-                  // 重新加载笔记
-                  loadNotes();
-                }, 2000);
-              } catch (error) {
-                setSyncMessage(`下载失败: ${error}`);
-                setTimeout(() => setSyncMessage(""), 3000);
-              }
+              await openSettingsWindow();
             }}
             className="text-gray-400 hover:text-cyan-400 text-base transition-colors cursor-pointer"
-            title="从云端下载"
+            title="设置"
             style={{ WebkitAppRegion: 'no-drag' } as any}
           >
-            ⬇️
+            ⚙️
           </button>
-          <button
-            onClick={async (e) => {
-              e.stopPropagation();
-              try {
-                const { pushNotes } = await import('./features/sync/api');
-                const result = await pushNotes();
-                setSyncMessage(result);
-                setTimeout(() => setSyncMessage(""), 2000);
-              } catch (error) {
-                setSyncMessage(`上传失败: ${error}`);
-                setTimeout(() => setSyncMessage(""), 3000);
-              }
-            }}
-            className="text-gray-400 hover:text-cyan-400 text-base transition-colors cursor-pointer"
-            title="上传到云端"
-            style={{ WebkitAppRegion: 'no-drag' } as any}
-          >
-            ⬆️
-          </button>
-          <button
-            onClick={async (e) => {
-              e.stopPropagation();
-              try {
-                const result = await syncNotes();
-                setSyncMessage(result);
-                setTimeout(() => {
-                  setSyncMessage("");
-                  // 重新加载笔记
-                  loadNotes();
-                }, 2000);
-              } catch (error) {
-                setSyncMessage(`同步失败: ${error}`);
-                setTimeout(() => setSyncMessage(""), 3000);
-              }
-            }}
-            className="text-gray-400 hover:text-cyan-400 text-base transition-colors cursor-pointer"
-            title="双向同步"
-            style={{ WebkitAppRegion: 'no-drag' } as any}
-          >
-            🔄
-          </button>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="relative" ref={syncMenuRef}>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowSyncMenu(!showSyncMenu);
+              }}
+              className="text-gray-400 hover:text-cyan-400 text-base transition-colors cursor-pointer"
+              title="同步"
+              style={{ WebkitAppRegion: 'no-drag' } as any}
+            >
+              🔄
+            </button>
+
+            {/* 同步菜单 */}
+            {showSyncMenu && (
+              <div className="absolute right-0 bottom-full mb-2 bg-white border border-gray-200 rounded-md shadow-lg py-1 z-50 min-w-[100px]">
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    setShowSyncMenu(false);
+                    try {
+                      const { pullNotes } = await import('./features/sync/api');
+                      const result = await pullNotes();
+                      setSyncMessage(result);
+                      setTimeout(() => {
+                        setSyncMessage("");
+                        loadNotes();
+                      }, 2000);
+                    } catch (error) {
+                      setSyncMessage(`下载失败: ${error}`);
+                      setTimeout(() => setSyncMessage(""), 3000);
+                    }
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-gray-50 text-gray-700 text-sm flex items-center justify-center gap-2"
+                >
+                  <span>⬇️</span>
+                  <span>下载</span>
+                </button>
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    setShowSyncMenu(false);
+                    try {
+                      const { pushNotes } = await import('./features/sync/api');
+                      const result = await pushNotes();
+                      setSyncMessage(result);
+                      setTimeout(() => setSyncMessage(""), 2000);
+                    } catch (error) {
+                      setSyncMessage(`上传失败: ${error}`);
+                      setTimeout(() => setSyncMessage(""), 3000);
+                    }
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-gray-50 text-gray-700 text-sm flex items-center justify-center gap-2"
+                >
+                  <span>⬆️</span>
+                  <span>上传</span>
+                </button>
+                <div className="border-t border-gray-100 my-1"></div>
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    setShowSyncMenu(false);
+                    try {
+                      const result = await syncNotes();
+                      setSyncMessage(result);
+                      setTimeout(() => {
+                        setSyncMessage("");
+                        loadNotes();
+                      }, 2000);
+                    } catch (error) {
+                      setSyncMessage(`同步失败: ${error}`);
+                      setTimeout(() => setSyncMessage(""), 3000);
+                    }
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-gray-50 text-gray-700 text-sm flex items-center justify-center gap-2"
+                >
+                  <span>🔄</span>
+                  <span>同步</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

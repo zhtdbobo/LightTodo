@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Note, CreateNoteInput, UpdateNoteInput, Tag } from "../types";
 
 // 转换 camelCase 到 snake_case
-function toSnakeCase(obj: any): any {
+export function toSnakeCase(obj: any): any {
   if (Array.isArray(obj)) {
     return obj.map(toSnakeCase);
   } else if (obj !== null && typeof obj === "object") {
@@ -16,7 +16,7 @@ function toSnakeCase(obj: any): any {
 }
 
 // 转换 snake_case 到 camelCase
-function toCamelCase(obj: any): any {
+export function toCamelCase(obj: any): any {
   if (Array.isArray(obj)) {
     return obj.map(toCamelCase);
   } else if (obj !== null && typeof obj === "object") {
@@ -69,3 +69,4 @@ export async function getAllTags(): Promise<Tag[]> {
   const result = await invoke("get_all_tags");
   return toCamelCase(result);
 }
+
