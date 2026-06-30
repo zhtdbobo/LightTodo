@@ -268,9 +268,9 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
         }
     }
 
-    // 5. 更新同步时间（使用当前时间）
-    let now = chrono::Utc::now().timestamp();
-    {
+    // 5. 仅在有实际操作时更新同步时间
+    if uploaded > 0 || downloaded > 0 || updated > 0 || deleted > 0 {
+        let now = chrono::Utc::now().timestamp();
         let conn = state.db.get_connection();
         let conn = conn.lock();
         conn.execute(
@@ -311,6 +311,8 @@ pub async fn push_notes(state: State<'_, AppState>) -> Result<String, String> {
     let _ = client.create_directory(&directory).await;
 
     let last_sync = config.last_sync.unwrap_or(0);
+    // 记录本次同步开始的时间（用于下次同步的基准）
+    let sync_start_time = chrono::Utc::now().timestamp();
 
     let notes = {
         let conn = state.db.get_connection();
@@ -345,19 +347,24 @@ pub async fn push_notes(state: State<'_, AppState>) -> Result<String, String> {
     let mut uploaded = 0;
     let is_first_sync = last_sync == 0;
 
+    eprintln!("push_notes: last_sync={}, sync_start_time={}, is_first_sync={}, notes_count={}", last_sync, sync_start_time, is_first_sync, notes.len());
+
     for note in &notes {
         let updated_at = note.get("updatedAt").and_then(|v| v.as_i64()).unwrap_or(0);
+        let id = note.get("id").and_then(|v| v.as_str()).unwrap_or("");
 
-        // 首次同步上传所有，之后只上传修改过的
-        if is_first_sync || updated_at >= last_sync {
-            let id = note.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        // 修改判断逻辑：只要 updated_at > last_sync 就上传（不用 >=）
+        let should_upload = is_first_sync || updated_at > last_sync;
+        eprintln!("  note {}: updated_at={}, should_upload={}", id, updated_at, should_upload);
+
+        if should_upload {
             let json_data = serde_json::to_string_pretty(&note).map_err(|e| e.to_string())?;
             let file_path = format!("{}/{}.json", directory, id);
 
             client
                 .upload_file(&file_path, json_data.as_bytes())
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("上传 {} 失败: {}", id, e))?;
 
             uploaded += 1;
         }
@@ -389,6 +396,17 @@ pub async fn push_notes(state: State<'_, AppState>) -> Result<String, String> {
                 Err(e) => eprintln!("删除云端文件失败 {}: {}", filename, e),
             }
         }
+    }
+
+    // 仅在有实际操作时更新同步时间（避免空同步推进时间戳）
+    if uploaded > 0 || deleted > 0 {
+        let conn = state.db.get_connection();
+        let conn = conn.lock();
+        conn.execute(
+            "UPDATE webdav_config SET last_sync = ?1 WHERE id = 1",
+            params![sync_start_time],
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     Ok(format!("已上传 {} 个待办，删除云端 {} 个（共 {} 个）", uploaded, deleted, notes.len()))
@@ -436,6 +454,7 @@ pub async fn pull_notes(state: State<'_, AppState>) -> Result<String, String> {
         .map_err(|e| format!("获取远程文件列表失败: {}", e))?;
 
     let mut downloaded = 0;
+    let mut updated = 0;
     let mut errors = Vec::new();
 
     for filename in remote_files {
@@ -449,30 +468,54 @@ pub async fn pull_notes(state: State<'_, AppState>) -> Result<String, String> {
             Ok(data) => {
                 match serde_json::from_slice::<serde_json::Value>(&data) {
                     Ok(remote_note) => {
+                        let remote_id = remote_note.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                        let remote_updated = remote_note.get("updatedAt").and_then(|v| v.as_i64()).unwrap_or(0);
+
                         let conn = state.db.get_connection();
                         let conn = conn.lock();
 
-                        match conn.execute(
-                            "INSERT OR REPLACE INTO notes (id, title, content, is_todo, is_completed, priority, pinned, created_at, updated_at)
-                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                            params![
-                                remote_note.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-                                remote_note.get("title").and_then(|v| v.as_str()).unwrap_or(""),
-                                remote_note.get("content").and_then(|v| v.as_str()).unwrap_or(""),
-                                if remote_note.get("isTodo").and_then(|v| v.as_bool()).unwrap_or(false) { 1 } else { 0 },
-                                if remote_note.get("isCompleted").and_then(|v| v.as_bool()).unwrap_or(false) { 1 } else { 0 },
-                                remote_note.get("priority").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-                                if remote_note.get("pinned").and_then(|v| v.as_bool()).unwrap_or(false) { 1 } else { 0 },
-                                remote_note.get("createdAt").and_then(|v| v.as_i64()).unwrap_or(0),
-                                remote_note.get("updatedAt").and_then(|v| v.as_i64()).unwrap_or(0),
-                            ],
-                        ) {
-                            Ok(_) => {
-                                downloaded += 1;
-                            }
-                            Err(e) => {
-                                let err_msg = format!("插入数据库失败 {}: {}", filename, e);
-                                errors.push(err_msg);
+                        // 检查本地是否存在且是否需要更新
+                        let local_updated: Option<i64> = conn
+                            .query_row(
+                                "SELECT updated_at FROM notes WHERE id = ?1",
+                                params![remote_id],
+                                |row| row.get(0),
+                            )
+                            .optional()
+                            .map_err(|e| e.to_string())?;
+
+                        let should_update = match local_updated {
+                            Some(local) => remote_updated > local,
+                            None => true, // 本地不存在，需要下载
+                        };
+
+                        if should_update {
+                            match conn.execute(
+                                "INSERT OR REPLACE INTO notes (id, title, content, is_todo, is_completed, priority, pinned, created_at, updated_at)
+                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                                params![
+                                    remote_id,
+                                    remote_note.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+                                    remote_note.get("content").and_then(|v| v.as_str()).unwrap_or(""),
+                                    if remote_note.get("isTodo").and_then(|v| v.as_bool()).unwrap_or(false) { 1 } else { 0 },
+                                    if remote_note.get("isCompleted").and_then(|v| v.as_bool()).unwrap_or(false) { 1 } else { 0 },
+                                    remote_note.get("priority").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+                                    if remote_note.get("pinned").and_then(|v| v.as_bool()).unwrap_or(false) { 1 } else { 0 },
+                                    remote_note.get("createdAt").and_then(|v| v.as_i64()).unwrap_or(0),
+                                    remote_updated,
+                                ],
+                            ) {
+                                Ok(_) => {
+                                    if local_updated.is_some() {
+                                        updated += 1;
+                                    } else {
+                                        downloaded += 1;
+                                    }
+                                }
+                                Err(e) => {
+                                    let err_msg = format!("插入数据库失败 {}: {}", filename, e);
+                                    errors.push(err_msg);
+                                }
                             }
                         }
                     }
@@ -490,8 +533,10 @@ pub async fn pull_notes(state: State<'_, AppState>) -> Result<String, String> {
     }
 
     if !errors.is_empty() {
-        Ok(format!("已下载 {} 个待办，{} 个失败: {}", downloaded, errors.len(), errors.join("; ")))
+        Ok(format!("已下载 {} 个，更新 {} 个，{} 个失败: {}", downloaded, updated, errors.len(), errors.join("; ")))
+    } else if downloaded > 0 || updated > 0 {
+        Ok(format!("已下载 {} 个，更新 {} 个", downloaded, updated))
     } else {
-        Ok(format!("已下载 {} 个待办", downloaded))
+        Ok("无需下载，本地已是最新".to_string())
     }
 }
