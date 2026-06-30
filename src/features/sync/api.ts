@@ -41,3 +41,7 @@ export async function pushNotes(): Promise<string> {
 export async function pullNotes(): Promise<string> {
   return await invoke<string>("pull_notes");
 }
+
+export async function resetSyncState(): Promise<void> {
+  return await invoke<void>("reset_sync_state");
+}

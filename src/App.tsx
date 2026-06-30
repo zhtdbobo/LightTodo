@@ -56,10 +56,12 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
   const [showSyncMenu, setShowSyncMenu] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const hasInitialized = useRef(false);
   const autoSyncInterval = useRef<number | null>(null);
   const grabApiRef = useRef<any>(null);
   const syncMenuRef = useRef<HTMLDivElement>(null);
+  const resetConfirmRef = useRef<HTMLDivElement>(null);
 
   // 检查是否是设置页面
   useEffect(() => {
@@ -87,33 +89,22 @@ function App() {
     }
   }, []);
 
-  // 点击外部关闭同步菜单
+  // 点击外部关闭同步菜单和重置确认框
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (syncMenuRef.current && !syncMenuRef.current.contains(event.target as Node)) {
         setShowSyncMenu(false);
       }
-    };
-
-    if (showSyncMenu) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-    }
-  }, [showSyncMenu]);
-
-  // 点击外部关闭同步菜单
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (syncMenuRef.current && !syncMenuRef.current.contains(event.target as Node)) {
-        setShowSyncMenu(false);
+      if (resetConfirmRef.current && !resetConfirmRef.current.contains(event.target as Node)) {
+        setShowResetConfirm(false);
       }
     };
 
-    if (showSyncMenu) {
+    if (showSyncMenu || showResetConfirm) {
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
-  }, [showSyncMenu]);
+  }, [showSyncMenu, showResetConfirm]);
 
   // 加载便签
   useEffect(() => {
@@ -1068,9 +1059,70 @@ function App() {
                   <span>🔄</span>
                   <span>同步</span>
                 </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowSyncMenu(false);
+                    setShowResetConfirm(true);
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-gray-50 text-red-600 text-sm flex items-center justify-center gap-2"
+                >
+                  <span>🔧</span>
+                  <span>重置</span>
+                </button>
               </div>
             )}
           </div>
+
+          {/* 重置确认弹窗 */}
+          {showResetConfirm && (
+            <div
+              ref={resetConfirmRef}
+              className="absolute bottom-14 right-2 bg-white rounded-lg shadow-lg border border-gray-200 p-4 w-64 z-50"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="text-sm text-gray-700 mb-3">
+                重置会导致下次同步时重新上传所有待办，并关闭自动同步。确定继续吗？
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => setShowResetConfirm(false)}
+                  className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 rounded"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={async () => {
+                    setShowResetConfirm(false);
+                    try {
+                      const { resetSyncState, getWebDAVConfig, saveWebDAVConfig } = await import('./features/sync/api');
+
+                      // 关闭自动同步
+                      const config = await getWebDAVConfig();
+                      if (config) {
+                        await saveWebDAVConfig({ ...config, auto_sync: false });
+
+                        // 发送事件通知设置页面刷新
+                        const { emit } = await import('@tauri-apps/api/event');
+                        await emit('webdav-config-changed');
+                      }
+
+                      // 重置同步状态
+                      await resetSyncState();
+                      setSyncMessage('同步状态已重置，自动同步已关闭');
+                      setTimeout(() => setSyncMessage(""), 3000);
+                    } catch (error) {
+                      setSyncMessage(`重置失败: ${error}`);
+                      setTimeout(() => setSyncMessage(""), 3000);
+                    }
+                  }}
+                  className="px-3 py-1.5 text-sm text-white bg-red-500 hover:bg-red-600 rounded"
+                >
+                  确定
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

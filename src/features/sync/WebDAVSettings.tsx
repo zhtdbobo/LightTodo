@@ -5,6 +5,7 @@ import {
   testWebDAVConnection,
   type WebDAVConfig,
 } from "../sync/api";
+import { listen } from "@tauri-apps/api/event";
 
 export function WebDAVSettings() {
   const [config, setConfig] = useState<WebDAVConfig>({
@@ -22,6 +23,15 @@ export function WebDAVSettings() {
 
   useEffect(() => {
     loadConfig();
+
+    // 监听配置变化，实时刷新
+    const unlisten = listen("webdav-config-changed", () => {
+      loadConfig();
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, []);
 
   const loadConfig = async () => {
