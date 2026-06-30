@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"groupId: 'todo',$\" src/features/notes/stores/notesStore.test.ts)",
+      "Bash(cargo build *)",
+      "Bash(./src-tauri/target/debug/lighttodo.exe)",
+      "Bash(./lighttodo.exe)",
+      "Bash(git add *)"
+    ]
+  }
+}

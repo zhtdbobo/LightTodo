@@ -84,6 +84,37 @@ npm run tauri build
 # Linux:   src-tauri/target/release/bundle/appimage/
 ```
 
+## 🧪 测试
+
+### 运行单元测试
+
+```bash
+# 运行所有单元测试
+npm test
+
+# 监听模式（开发时使用）
+npm run test:watch
+
+# 生成覆盖率报告
+npm run test:coverage
+```
+
+### 运行 E2E 测试
+
+```bash
+# 安装 Playwright 浏览器（首次运行）
+npx playwright install
+
+# 运行 E2E 测试
+npm run test:e2e
+
+# 交互式 UI 模式
+npm run test:e2e:ui
+
+# 调试模式
+npm run test:e2e:debug
+```
+
 ## 📖 使用说明
 
 ### 基础操作
@@ -189,6 +220,7 @@ npm run tauri build
 - **WebDAV 客户端**: Rust reqwest + roxmltree
 - **UI**: Tailwind CSS + shadcn/ui
 - **构建工具**: Vite
+- **测试框架**: Vitest + React Testing Library + Playwright
 
 **为什么选择 Tauri？**
 - 安装包体积仅 3-5 MB（Electron 通常 50+ MB）
@@ -299,6 +331,11 @@ CREATE TABLE webdav_config (
 - [x] 定时自动同步（每 5 分钟）
 - [x] 待办项置顶功能
 - [x] 自定义分组功能
+- [x] 单元测试框架搭建（Vitest + React Testing Library）
+- [x] E2E 测试框架搭建（Playwright）
+- [x] 核心 hooks 单元测试（useNotes, useGroups）
+- [x] Store 单元测试（notesStore）
+- [x] API 层单元测试（WebDAV sync api）
 - [ ] 冲突检测与处理（版本控制）
 - [ ] 离线队列
 - [ ] 透明窗口 + IME 兼容（等待 Tauri 修复）
