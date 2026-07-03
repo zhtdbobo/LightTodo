@@ -150,6 +150,18 @@ impl Database {
             [],
         );
 
+        // 迁移：添加 completed_at 列（如果不存在）
+        let _ = conn.execute(
+            "ALTER TABLE notes ADD COLUMN completed_at INTEGER",
+            [],
+        );
+
+        // 创建 completed_at 索引
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notes_completed_at ON notes(completed_at)",
+            [],
+        );
+
         Ok(())
     }
 

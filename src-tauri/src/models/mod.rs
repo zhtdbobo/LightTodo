@@ -15,6 +15,7 @@ pub struct Note {
     pub created_at: i64,
     pub updated_at: i64,
     pub synced_at: Option<i64>,
+    pub completed_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

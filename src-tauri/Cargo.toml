@@ -1,6 +1,6 @@
 [package]
 name = "lighttodo"
-version = "0.1.0"
+version = "0.2.0"
 description = "A lightweight note-taking app with WebDAV sync"
 authors = ["jaridli"]
 edition = "2021"
@@ -29,3 +29,10 @@ urlencoding = "2"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+[profile.dev]
+incremental = true
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2

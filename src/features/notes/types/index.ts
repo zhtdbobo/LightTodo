@@ -13,6 +13,7 @@ export interface Note {
   createdAt: number;
   updatedAt: number;
   syncedAt?: number;
+  completedAt?: number;
 }
 
 // 创建便签输入

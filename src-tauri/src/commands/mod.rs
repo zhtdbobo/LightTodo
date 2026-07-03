@@ -16,7 +16,7 @@ pub async fn get_all_notes(state: State<'_, AppState>) -> Result<Vec<Note>, Stri
     let mut stmt = conn
         .prepare(
             "SELECT id, title, content, is_todo, is_completed, color, pinned, priority,
-                    created_at, updated_at, synced_at, group_id
+                    created_at, updated_at, synced_at, group_id, completed_at
              FROM notes
              ORDER BY pinned DESC, priority DESC, updated_at DESC",
         )
@@ -40,6 +40,7 @@ pub async fn get_all_notes(state: State<'_, AppState>) -> Result<Vec<Note>, Stri
                 updated_at: row.get(9)?,
                 synced_at: row.get(10)?,
                 group_id: row.get(11)?,
+                completed_at: row.get(12)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -64,7 +65,7 @@ pub async fn get_note_by_id(id: String, state: State<'_, AppState>) -> Result<Op
     let mut stmt = conn
         .prepare(
             "SELECT id, title, content, is_todo, is_completed, color, pinned, priority,
-                    created_at, updated_at, synced_at, group_id
+                    created_at, updated_at, synced_at, group_id, completed_at
              FROM notes WHERE id = ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -85,6 +86,7 @@ pub async fn get_note_by_id(id: String, state: State<'_, AppState>) -> Result<Op
                 updated_at: row.get(9)?,
                 synced_at: row.get(10)?,
                 group_id: row.get(11)?,
+                completed_at: row.get(12)?,
             })
         })
         .optional()
@@ -148,6 +150,7 @@ pub async fn create_note(input: CreateNoteInput, state: State<'_, AppState>) -> 
         created_at: now,
         updated_at: now,
         synced_at: None,
+        completed_at: None,
     })
 }
 
@@ -180,6 +183,12 @@ pub async fn update_note(input: UpdateNoteInput, state: State<'_, AppState>) -> 
         if input.is_completed.is_some() {
             update_count += 1;
             updates.push(format!("is_completed = ?{}", update_count));
+
+            // 只有在从未完成变为完成时，才设置 completed_at
+            // 需要判断当前 completed_at 是否为 NULL
+            update_count += 1;
+            updates.push(format!("completed_at = CASE WHEN ?{} = 1 AND completed_at IS NULL THEN ?{} ELSE completed_at END", update_count, update_count + 1));
+            update_count += 1;
         }
         if input.color.is_some() {
             update_count += 1;
@@ -226,6 +235,14 @@ pub async fn update_note(input: UpdateNoteInput, state: State<'_, AppState>) -> 
             }
             if let Some(is_completed) = input.is_completed {
                 stmt.raw_bind_parameter(param_index, is_completed as i64).map_err(|e| e.to_string())?;
+                param_index += 1;
+
+                // 为 CASE 表达式绑定参数：is_completed 值
+                stmt.raw_bind_parameter(param_index, is_completed as i64).map_err(|e| e.to_string())?;
+                param_index += 1;
+
+                // 为 CASE 表达式绑定参数：completed_at 时间戳
+                stmt.raw_bind_parameter(param_index, now).map_err(|e| e.to_string())?;
                 param_index += 1;
             }
             if let Some(ref color) = input.color {
@@ -288,7 +305,7 @@ pub async fn search_notes(query: String, state: State<'_, AppState>) -> Result<V
     let mut stmt = conn
         .prepare(
             "SELECT id, title, content, is_todo, is_completed, color, pinned, priority,
-                    created_at, updated_at, synced_at, group_id
+                    created_at, updated_at, synced_at, group_id, completed_at
              FROM notes
              WHERE title LIKE ?1 OR content LIKE ?1
              ORDER BY pinned DESC, priority DESC, updated_at DESC",
@@ -311,6 +328,7 @@ pub async fn search_notes(query: String, state: State<'_, AppState>) -> Result<V
                 updated_at: row.get(9)?,
                 synced_at: row.get(10)?,
                 group_id: row.get(11)?,
+                completed_at: row.get(12)?,
             })
         })
         .map_err(|e| e.to_string())?;

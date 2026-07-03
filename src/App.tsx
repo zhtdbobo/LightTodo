@@ -6,6 +6,7 @@ import type { Note, Group } from "./features/notes/types";
 import { Window } from "@tauri-apps/api/window";
 import { WebDAVSettings } from "./features/sync/WebDAVSettings";
 import { syncNotes } from "./features/sync/api";
+import { formatTimestamp, calculateDuration } from "./features/notes/utils/timeFormat";
 
 // 仅在开发模式下导入 react-grab
 const initReactGrab = import.meta.env.DEV
@@ -57,6 +58,7 @@ function App() {
   const [syncMessage, setSyncMessage] = useState("");
   const [showSyncMenu, setShowSyncMenu] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const hasInitialized = useRef(false);
   const autoSyncInterval = useRef<number | null>(null);
   const grabApiRef = useRef<any>(null);
@@ -387,6 +389,17 @@ function App() {
       .sort((a, b) => b.priority - a.priority),
   }));
 
+  // 按分组分类已完成的待办
+  const completedByGroup = groups.map((group) => ({
+    group,
+    notes: notes
+      .filter((n) => n.groupId === group.id && n.isCompleted)
+      .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0)),
+  }));
+
+  // 无分组的已完成待办
+  const completedWithoutGroup = notes.filter((n) => n.isCompleted && !n.groupId);
+
   // 将新建的空待办放到最前面
   const sortWithNewFirst = (items: typeof notes) => {
     const newItems = items.filter(n => !n.title);
@@ -491,6 +504,8 @@ function App() {
     const [showMenu, setShowMenu] = useState(false);
     const [showGroupInput, setShowGroupInput] = useState(false);
     const [newGroupName, setNewGroupName] = useState("");
+    const [isExpanded, setIsExpanded] = useState(false);
+    const [deleteConfirm, setDeleteConfirm] = useState<{ groupId: string; groupName: string; noteCount: number } | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
 
     // 点击外部关闭菜单
@@ -499,6 +514,7 @@ function App() {
         if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
           setShowMenu(false);
           setShowGroupInput(false);
+          setDeleteConfirm(null);
         }
       };
 
@@ -568,189 +584,269 @@ function App() {
     };
 
     return (
-      <div
-        className={`flex items-start gap-2.5 py-1 group relative`}
-      >
-        <input
-          type="checkbox"
-          checked={note.isCompleted}
-          onChange={() => handleToggleCompleted(note)}
-          className="mt-0.5 w-4 h-4 cursor-pointer flex-shrink-0 accent-cyan-400"
-        />
-        <button
-          onClick={() => handleCyclePriority(note)}
-          className="text-xs transition flex-shrink-0 mt-0.5"
-          title="切换优先级"
+      <div className="space-y-0.5">
+        <div
+          className={`flex items-start gap-2.5 py-1 group relative`}
         >
-          {getPriorityEmoji(note.priority) || "⚪"}
-        </button>
-        <textarea
-          ref={textareaRef}
-          value={localTitle}
-          onChange={(e) => {
-            setLocalTitle(e.target.value);
-            // 自动调整高度
-            adjustHeight();
-          }}
-          onBlur={handleLocalBlur}
-          onCompositionStart={() => {
-            composingRef.current = true;
-          }}
-          onCompositionEnd={(e) => {
-            composingRef.current = false;
-            setLocalTitle((e.target as HTMLTextAreaElement).value);
-          }}
-          onKeyDown={async (e) => {
-            // Enter 键保存当前待办并创建新待办（不换行）
-            if (e.key === 'Enter' && !e.shiftKey && !composingRef.current) {
-              e.preventDefault();
-
-              const currentContent = localTitle.trim();
-
-              // 如果当前待办为空，强制创建新待办
-              if (!currentContent) {
-                await handleCreateNote(true);
-                return;
-              }
-
-              // 先保存当前待办（如果有修改）
-              if (currentContent !== note.title) {
-                await handleEditTitle(note, localTitle);
-              }
-
-              // 强制创建新待办
-              await handleCreateNote(true);
-            }
-          }}
-          className={`flex-1 bg-transparent border-none outline-none text-sm resize-none overflow-hidden ${
-            note.isCompleted
-              ? "line-through text-gray-300"
-              : "text-gray-700"
-          } placeholder:text-gray-300 placeholder:opacity-50 leading-snug`}
-          placeholder="记点什么..."
-          autoComplete="off"
-          spellCheck="false"
-          rows={1}
-          style={{ minHeight: '20px' }}
-        />
-
-        {/* 三点菜单按钮 */}
-        <div className="relative flex-shrink-0" ref={menuRef}>
+          <input
+            type="checkbox"
+            checked={note.isCompleted}
+            onChange={() => handleToggleCompleted(note)}
+            className="mt-0.5 w-4 h-4 cursor-pointer flex-shrink-0 accent-cyan-400"
+          />
           <button
-            onClick={() => setShowMenu(!showMenu)}
-            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600 text-sm transition"
-            title="更多操作"
+            onClick={() => handleCyclePriority(note)}
+            className="text-xs transition flex-shrink-0 mt-0.5"
+            title="切换优先级"
           >
-            ⋯
+            {getPriorityEmoji(note.priority) || "⚪"}
           </button>
+          <textarea
+            ref={textareaRef}
+            value={localTitle}
+            onChange={(e) => {
+              setLocalTitle(e.target.value);
+              // 自动调整高度
+              adjustHeight();
+            }}
+            onBlur={handleLocalBlur}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={(e) => {
+              composingRef.current = false;
+              setLocalTitle((e.target as HTMLTextAreaElement).value);
+            }}
+            onKeyDown={async (e) => {
+              // Enter 键保存当前待办并创建新待办（不换行）
+              if (e.key === 'Enter' && !e.shiftKey && !composingRef.current) {
+                e.preventDefault();
 
-          {/* 下拉菜单 */}
-          {showMenu && (
-            <div className="absolute right-0 top-6 bg-white border border-gray-200 rounded-md shadow-lg py-0.5 z-50 min-w-[100px] text-xs">
-              {note.isCompleted ? (
-                <>
-                  <button
-                    onClick={() => {
-                      handleToggleCompleted(note);
-                      setShowMenu(false);
-                    }}
-                    className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700"
-                  >
-                    恢复
-                  </button>
-                  <div className="border-t border-gray-100"></div>
-                  <button
-                    onClick={() => {
-                      handleDelete(note);
-                      setShowMenu(false);
-                    }}
-                    className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-red-600"
-                  >
-                    删除
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={() => {
-                      handleTogglePinned(note);
-                      setShowMenu(false);
-                    }}
-                    className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700"
-                  >
-                    {note.pinned ? "取消置顶" : "置顶"}
-                  </button>
+                const currentContent = localTitle.trim();
 
-                  {/* 移动到分组 */}
-                  <div className="relative">
+                // 如果当前待办为空，强制创建新待办
+                if (!currentContent) {
+                  await handleCreateNote(true);
+                  return;
+                }
+
+                // 先保存当前待办（如果有修改）
+                if (currentContent !== note.title) {
+                  await handleEditTitle(note, localTitle);
+                }
+
+                // 强制创建新待办
+                await handleCreateNote(true);
+              }
+            }}
+            onClick={() => {
+              // 点击 textarea 时，如果是已完成的待办，展开/折叠详情
+              if (note.isCompleted) {
+                setIsExpanded(!isExpanded);
+              }
+            }}
+            className={`flex-1 bg-transparent border-none outline-none text-sm resize-none overflow-hidden ${
+              note.isCompleted
+                ? "line-through text-gray-300"
+                : "text-gray-700"
+            } placeholder:text-gray-300 placeholder:opacity-50 leading-snug`}
+            placeholder="记点什么..."
+            autoComplete="off"
+            spellCheck="false"
+            rows={1}
+            style={{ minHeight: '20px' }}
+          />
+
+          {/* 三点菜单按钮 */}
+          <div className="relative flex-shrink-0" ref={menuRef}>
+            <button
+              onClick={() => setShowMenu(!showMenu)}
+              className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600 text-sm transition"
+              title="更多操作"
+            >
+              ⋯
+            </button>
+
+            {/* 下拉菜单 */}
+            {showMenu && (
+              <div className="absolute right-0 top-6 bg-white border border-gray-200 rounded-md shadow-lg py-0.5 z-50 min-w-[100px] text-xs">
+                {note.isCompleted ? (
+                  <>
                     <button
-                      onClick={() => setShowGroupInput(!showGroupInput)}
-                      className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700 flex items-center justify-between"
+                      onClick={() => {
+                        handleToggleCompleted(note);
+                        setShowMenu(false);
+                      }}
+                      className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700"
                     >
-                      <span>移动到</span>
-                      <span className="text-gray-400">◂</span>
+                      恢复
+                    </button>
+                    <div className="border-t border-gray-100"></div>
+                    <button
+                      onClick={() => {
+                        handleDelete(note);
+                        setShowMenu(false);
+                      }}
+                      className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-red-600"
+                    >
+                      删除
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => {
+                        handleTogglePinned(note);
+                        setShowMenu(false);
+                      }}
+                      className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700"
+                    >
+                      {note.pinned ? "取消置顶" : "置顶"}
                     </button>
 
-                    {/* 分组子菜单 - 弹出到左侧 */}
-                    {showGroupInput && (
-                      <div className="absolute right-full top-0 mr-0.5 bg-white border border-gray-200 rounded-md shadow-lg py-0.5 min-w-[120px]">
-                        <button
-                          onClick={() => handleMoveToGroup(null)}
-                          className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700"
-                        >
-                          无分组
-                        </button>
-                        {groups.map((group) => (
-                          <button
-                            key={group.id}
-                            onClick={() => handleMoveToGroup(group.id)}
-                            className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700"
-                          >
-                            {group.name}
-                          </button>
-                        ))}
-                        <div className="border-t border-gray-100 my-0.5"></div>
-                        <div className="px-2 py-1.5">
-                          <input
-                            type="text"
-                            value={newGroupName}
-                            onChange={(e) => setNewGroupName(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                handleCreateAndMoveToGroup();
-                              }
-                            }}
-                            placeholder="新分组..."
-                            className="w-full px-2 py-1 text-xs border border-gray-300 rounded"
-                            autoFocus
-                          />
-                          <button
-                            onClick={handleCreateAndMoveToGroup}
-                            className="w-full mt-1 px-2 py-1 text-xs bg-cyan-400 text-white rounded hover:bg-cyan-500"
-                          >
-                            创建
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                    {/* 移动到分组 */}
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowGroupInput(!showGroupInput)}
+                        className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700 flex items-center justify-between"
+                      >
+                        <span>移动到</span>
+                        <span className="text-gray-400">◂</span>
+                      </button>
 
-                  <div className="border-t border-gray-100"></div>
-                  <button
-                    onClick={() => {
-                      handleDelete(note);
-                      setShowMenu(false);
-                    }}
-                    className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-red-600"
-                  >
-                    删除
-                  </button>
-                </>
-              )}
-            </div>
-          )}
+                      {/* 分组子菜单 - 弹出到左侧 */}
+                      {showGroupInput && (
+                        <div className="absolute right-full top-0 mr-0.5 bg-white border border-gray-200 rounded-md shadow-lg py-0.5 min-w-[120px]">
+                          {groups.map((group) => (
+                            <div
+                              key={group.id}
+                              className="group/item relative flex items-center justify-between px-3 py-1.5 hover:bg-gray-50"
+                            >
+                              <button
+                                onClick={() => handleMoveToGroup(group.id)}
+                                className="flex-1 text-left text-gray-700"
+                              >
+                                {group.name}
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const groupNotes = notes.filter(n => n.groupId === group.id && !n.isCompleted);
+                                  setDeleteConfirm({
+                                    groupId: group.id,
+                                    groupName: group.name,
+                                    noteCount: groupNotes.length,
+                                  });
+                                }}
+                                className="opacity-0 group-hover/item:opacity-100 text-red-400 hover:text-red-500 text-xs transition-opacity ml-2 flex-shrink-0"
+                                title="删除分组"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                          <div className="border-t border-gray-100 my-0.5"></div>
+                          <div className="px-2 py-1.5">
+                            <input
+                              type="text"
+                              value={newGroupName}
+                              onChange={(e) => setNewGroupName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleCreateAndMoveToGroup();
+                                }
+                              }}
+                              placeholder="新分组..."
+                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded"
+                              autoFocus
+                            />
+                            <button
+                              onClick={handleCreateAndMoveToGroup}
+                              className="w-full mt-1 px-2 py-1 text-xs bg-cyan-400 text-white rounded hover:bg-cyan-500"
+                            >
+                              创建
+                            </button>
+                          </div>
+
+                          {/* 删除确认弹窗 */}
+                          {deleteConfirm && (
+                            <div className="absolute right-full top-0 mr-2 bg-white border border-gray-200 rounded-md shadow-xl p-3 w-48 z-50">
+                              <div className="text-xs text-gray-700 mb-2">
+                                确定删除分组 <span className="font-medium">"{deleteConfirm.groupName}"</span> 吗？
+                                {deleteConfirm.noteCount > 0 && (
+                                  <div className="mt-1 text-gray-500">
+                                    分组内的 {deleteConfirm.noteCount} 个待办将移至未完成。
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex gap-2 justify-end">
+                                <button
+                                  onClick={() => setDeleteConfirm(null)}
+                                  className="px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 rounded"
+                                >
+                                  取消
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    await deleteGroup(deleteConfirm.groupId);
+                                    loadGroups();
+                                    loadNotes();
+                                    setDeleteConfirm(null);
+                                    setShowMenu(false);
+                                    setShowGroupInput(false);
+                                  }}
+                                  className="px-2 py-1 text-xs text-white bg-red-500 hover:bg-red-600 rounded"
+                                >
+                                  确定
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="border-t border-gray-100"></div>
+                    <button
+                      onClick={() => {
+                        handleDelete(note);
+                        setShowMenu(false);
+                      }}
+                      className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-red-600"
+                    >
+                      删除
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* 展开的详细信息 - 只在已完成的待办展开时显示 */}
+        {isExpanded && note.isCompleted && note.completedAt && (
+          <div className="ml-7 mr-8 p-2 bg-gray-50 rounded border border-gray-200 text-xs space-y-1">
+            <div className="flex justify-between">
+              <span className="text-gray-600">状态：</span>
+              <span className="text-green-600 font-medium">已完成</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-600">创建时间：</span>
+              <span className="text-gray-800">{formatTimestamp(note.createdAt)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-600">完成时间：</span>
+              <span className="text-gray-800">{formatTimestamp(note.completedAt)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-600">用时：</span>
+              <span className="text-blue-600 font-medium">
+                {calculateDuration(note.createdAt, note.completedAt)}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -874,7 +970,13 @@ function App() {
                     group={group}
                     onRename={handleRenameGroup}
                     onDelete={async () => {
-                      if (confirm(`确定删除分组"${group.name}"？分组内的待办将移至未完成。`)) {
+                      // 检查分组内是否有待办
+                      const hasNotes = groupNotes.length > 0;
+                      const message = hasNotes
+                        ? `确定删除分组"${group.name}"吗？\n\n分组内的 ${groupNotes.length} 个待办将移至未完成。`
+                        : `确定删除分组"${group.name}"吗？`;
+
+                      if (confirm(message)) {
                         await deleteGroup(group.id);
                         loadGroups();
                         loadNotes();
@@ -953,10 +1055,80 @@ function App() {
             {completedTodos.length > 0 && (
               <div>
                 <div className="text-xs text-gray-400 mb-2">已完成</div>
-                <div className="space-y-2">
-                  {completedTodos.map((note) => (
-                    <TodoItem key={note.id} note={note} />
+                <div className="space-y-3">
+                  {/* 按分组显示已完成的待办 */}
+                  {completedByGroup.map(({ group, notes: completedNotes }) => (
+                    completedNotes.length > 0 && (
+                      <div key={group.id}>
+                        <button
+                          onClick={() => {
+                            setExpandedGroups(prev => {
+                              const newSet = new Set(prev);
+                              if (newSet.has(group.id)) {
+                                newSet.delete(group.id);
+                              } else {
+                                newSet.add(group.id);
+                              }
+                              return newSet;
+                            });
+                          }}
+                          className="w-full text-left text-xs text-gray-500 hover:text-gray-700 mb-1 flex items-center gap-1"
+                        >
+                          <span className="transition-transform" style={{
+                            display: 'inline-block',
+                            transform: expandedGroups.has(group.id) ? 'rotate(90deg)' : 'rotate(0deg)'
+                          }}>
+                            ▶
+                          </span>
+                          <span>{group.name}</span>
+                          <span className="text-gray-400">({completedNotes.length})</span>
+                        </button>
+                        {expandedGroups.has(group.id) && (
+                          <div className="space-y-0.5 ml-4">
+                            {completedNotes.map((note) => (
+                              <TodoItem key={note.id} note={note} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
                   ))}
+
+                  {/* 无分组的已完成待办 */}
+                  {completedWithoutGroup.length > 0 && (
+                    <div>
+                      <button
+                        onClick={() => {
+                          setExpandedGroups(prev => {
+                            const newSet = new Set(prev);
+                            if (newSet.has('no-group')) {
+                              newSet.delete('no-group');
+                            } else {
+                              newSet.add('no-group');
+                            }
+                            return newSet;
+                          });
+                        }}
+                        className="w-full text-left text-xs text-gray-500 hover:text-gray-700 mb-1 flex items-center gap-1"
+                      >
+                        <span className="transition-transform" style={{
+                          display: 'inline-block',
+                          transform: expandedGroups.has('no-group') ? 'rotate(90deg)' : 'rotate(0deg)'
+                        }}>
+                          ▶
+                        </span>
+                        <span>无分组</span>
+                        <span className="text-gray-400">({completedWithoutGroup.length})</span>
+                      </button>
+                      {expandedGroups.has('no-group') && (
+                        <div className="space-y-0.5 ml-4">
+                          {completedWithoutGroup.map((note) => (
+                            <TodoItem key={note.id} note={note} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

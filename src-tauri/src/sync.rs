@@ -118,17 +118,133 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
 
     let last_sync = config.last_sync.unwrap_or(0);
 
-    // 1. 获取本地所有待办（包含删除标记的）
+    // 1. 同步分组
+    let groups_directory = format!("{}/groups", config.directory);
+    let _ = client.create_directory(&groups_directory).await;
+
+    let local_groups: Vec<serde_json::Value> = {
+        let conn_arc = state.db.get_connection();
+        let conn = conn_arc.lock();
+
+        let mut stmt = conn
+            .prepare("SELECT id, name, display_order, created_at FROM groups")
+            .map_err(|e| e.to_string())?;
+
+        let groups_result = stmt.query_map([], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, String>(0)?,
+                "name": row.get::<_, String>(1)?,
+                "displayOrder": row.get::<_, i32>(2)?,
+                "createdAt": row.get::<_, i64>(3)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+        groups_result
+    };
+
+    // 1.1 上传本地分组
+    let mut groups_uploaded = 0;
+    for group in &local_groups {
+        let id = group.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let json_data = serde_json::to_string_pretty(&group).map_err(|e| e.to_string())?;
+        let file_path = format!("{}/{}.json", groups_directory, id);
+
+        client
+            .upload_file(&file_path, json_data.as_bytes())
+            .await
+            .map_err(|e| format!("上传分组失败: {}", e))?;
+
+        groups_uploaded += 1;
+    }
+
+    // 1.2 下载远程分组
+    let remote_group_files = client
+        .list_directory(&groups_directory)
+        .await
+        .unwrap_or_else(|_| Vec::new());
+
+    let mut groups_downloaded = 0;
+    for filename in remote_group_files {
+        if !filename.ends_with(".json") {
+            continue;
+        }
+
+        let file_path = format!("{}/{}", groups_directory, filename);
+
+        if let Ok(data) = client.download_file(&file_path).await {
+            if let Ok(remote_group) = serde_json::from_slice::<serde_json::Value>(&data) {
+                let remote_id = remote_group.get("id").and_then(|v| v.as_str()).unwrap_or("");
+
+                // 检查本地是否存在
+                let exists = local_groups.iter().any(|g| {
+                    g.get("id").and_then(|v| v.as_str()).unwrap_or("") == remote_id
+                });
+
+                if !exists {
+                    let conn = state.db.get_connection();
+                    let conn = conn.lock();
+
+                    conn.execute(
+                        "INSERT OR REPLACE INTO groups (id, name, display_order, created_at)
+                         VALUES (?1, ?2, ?3, ?4)",
+                        params![
+                            remote_id,
+                            remote_group.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                            remote_group.get("displayOrder").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+                            remote_group.get("createdAt").and_then(|v| v.as_i64()).unwrap_or(0),
+                        ],
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                    groups_downloaded += 1;
+                }
+            }
+        }
+    }
+
+    // 1.3 删除云端多余的分组
+    let local_group_ids: std::collections::HashSet<String> = local_groups
+        .iter()
+        .filter_map(|g| g.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .collect();
+
+    let remote_group_files = client
+        .list_directory(&groups_directory)
+        .await
+        .unwrap_or_else(|_| Vec::new());
+
+    let mut groups_deleted = 0;
+    for filename in remote_group_files {
+        if !filename.ends_with(".json") {
+            continue;
+        }
+
+        let remote_id = filename.trim_end_matches(".json");
+
+        if !local_group_ids.contains(remote_id) {
+            let file_path = format!("{}/{}", groups_directory, filename);
+            if client.delete_file(&file_path).await.is_ok() {
+                groups_deleted += 1;
+            }
+        }
+    }
+
+    // 2. 获取本地所有待办（包含删除标记的）
     let local_notes: Vec<serde_json::Value> = {
         let conn = state.db.get_connection();
         let conn = conn.lock();
 
         let mut stmt = conn
-            .prepare("SELECT id, title, content, is_todo, is_completed, priority, pinned, created_at, updated_at FROM notes")
+            .prepare("SELECT id, title, content, is_todo, is_completed, priority, pinned, group_id, created_at, updated_at, completed_at FROM notes")
             .map_err(|e| e.to_string())?;
 
         let notes_result = stmt.query_map([], |row| {
-            Ok(serde_json::json!({
+            let group_id: Option<String> = row.get(7)?;
+            let completed_at: Option<i64> = row.get(10)?;
+            let mut note = serde_json::json!({
                 "id": row.get::<_, String>(0)?,
                 "title": row.get::<_, String>(1)?,
                 "content": row.get::<_, String>(2)?,
@@ -136,9 +252,19 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
                 "isCompleted": row.get::<_, i32>(4)? != 0,
                 "priority": row.get::<_, i32>(5)?,
                 "pinned": row.get::<_, i32>(6)? != 0,
-                "createdAt": row.get::<_, i64>(7)?,
-                "updatedAt": row.get::<_, i64>(8)?,
-            }))
+                "createdAt": row.get::<_, i64>(8)?,
+                "updatedAt": row.get::<_, i64>(9)?,
+            });
+
+            if let Some(gid) = group_id {
+                note["groupId"] = serde_json::Value::String(gid);
+            }
+
+            if let Some(cat) = completed_at {
+                note["completedAt"] = serde_json::Value::Number(cat.into());
+            }
+
+            Ok(note)
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
@@ -147,7 +273,7 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
         notes_result
     };
 
-    // 2. 上传本地修改过的待办（updated_at > last_sync，或首次同步时上传所有）
+    // 3. 上传本地修改过的待办（updated_at > last_sync，或首次同步时上传所有）
     let mut uploaded = 0;
     let is_first_sync = last_sync == 0;
 
@@ -169,7 +295,7 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
         }
     }
 
-    // 2.5. 删除云端多余的文件（本地已删除的）
+    // 3.5. 删除云端多余的文件（本地已删除的）
     let remote_files = client
         .list_directory(&directory)
         .await
@@ -199,13 +325,13 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
         }
     }
 
-    // 3. 下载远程文件列表
+    // 4. 下载远程文件列表
     let remote_files = client
         .list_directory(&directory)
         .await
         .unwrap_or_else(|_| Vec::new());
 
-    // 4. 下载并合并远程待办
+    // 5. 下载并合并远程待办
     let mut downloaded = 0;
     let mut updated = 0;
 
@@ -240,8 +366,8 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
                         let conn = conn.lock();
 
                         conn.execute(
-                            "INSERT OR REPLACE INTO notes (id, title, content, is_todo, is_completed, priority, pinned, created_at, updated_at)
-                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                            "INSERT OR REPLACE INTO notes (id, title, content, is_todo, is_completed, priority, pinned, group_id, created_at, updated_at, completed_at)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                             params![
                                 remote_id,
                                 remote_note.get("title").and_then(|v| v.as_str()).unwrap_or(""),
@@ -250,8 +376,10 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
                                 if remote_note.get("isCompleted").and_then(|v| v.as_bool()).unwrap_or(false) { 1 } else { 0 },
                                 remote_note.get("priority").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
                                 if remote_note.get("pinned").and_then(|v| v.as_bool()).unwrap_or(false) { 1 } else { 0 },
+                                remote_note.get("groupId").and_then(|v| v.as_str()),
                                 remote_note.get("createdAt").and_then(|v| v.as_i64()).unwrap_or(0),
                                 remote_updated,
+                                remote_note.get("completedAt").and_then(|v| v.as_i64()),
                             ],
                         )
                         .map_err(|e| e.to_string())?;
@@ -268,8 +396,8 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
         }
     }
 
-    // 5. 仅在有实际操作时更新同步时间
-    if uploaded > 0 || downloaded > 0 || updated > 0 || deleted > 0 {
+    // 6. 仅在有实际操作时更新同步时间
+    if uploaded > 0 || downloaded > 0 || updated > 0 || deleted > 0 || groups_uploaded > 0 || groups_downloaded > 0 || groups_deleted > 0 {
         let now = chrono::Utc::now().timestamp();
         let conn = state.db.get_connection();
         let conn = conn.lock();
@@ -281,8 +409,8 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
     }
 
     Ok(format!(
-        "同步完成 (上传 {}, 下载 {}, 更新 {}, 删除 {})",
-        uploaded, downloaded, updated, deleted
+        "同步完成 - 分组(上传 {}, 下载 {}, 删除 {}), 待办(上传 {}, 下载 {}, 更新 {}, 删除 {})",
+        groups_uploaded, groups_downloaded, groups_deleted, uploaded, downloaded, updated, deleted
     ))
 }
 
@@ -319,12 +447,14 @@ pub async fn push_notes(state: State<'_, AppState>) -> Result<String, String> {
         let conn = conn.lock();
 
         let mut stmt = conn
-            .prepare("SELECT id, title, content, is_todo, is_completed, priority, pinned, created_at, updated_at FROM notes")
+            .prepare("SELECT id, title, content, is_todo, is_completed, priority, pinned, group_id, created_at, updated_at, completed_at FROM notes")
             .map_err(|e| e.to_string())?;
 
         let notes_result: Vec<serde_json::Value> = stmt
             .query_map([], |row| {
-                Ok(serde_json::json!({
+                let group_id: Option<String> = row.get(7)?;
+                let completed_at: Option<i64> = row.get(10)?;
+                let mut note = serde_json::json!({
                     "id": row.get::<_, String>(0)?,
                     "title": row.get::<_, String>(1)?,
                     "content": row.get::<_, String>(2)?,
@@ -332,9 +462,19 @@ pub async fn push_notes(state: State<'_, AppState>) -> Result<String, String> {
                     "isCompleted": row.get::<_, i32>(4)? != 0,
                     "priority": row.get::<_, i32>(5)?,
                     "pinned": row.get::<_, i32>(6)? != 0,
-                    "createdAt": row.get::<_, i64>(7)?,
-                    "updatedAt": row.get::<_, i64>(8)?,
-                }))
+                    "createdAt": row.get::<_, i64>(8)?,
+                    "updatedAt": row.get::<_, i64>(9)?,
+                });
+
+                if let Some(gid) = group_id {
+                    note["groupId"] = serde_json::Value::String(gid);
+                }
+
+                if let Some(cat) = completed_at {
+                    note["completedAt"] = serde_json::Value::Number(cat.into());
+                }
+
+                Ok(note)
             })
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
@@ -491,8 +631,8 @@ pub async fn pull_notes(state: State<'_, AppState>) -> Result<String, String> {
 
                         if should_update {
                             match conn.execute(
-                                "INSERT OR REPLACE INTO notes (id, title, content, is_todo, is_completed, priority, pinned, created_at, updated_at)
-                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                                "INSERT OR REPLACE INTO notes (id, title, content, is_todo, is_completed, priority, pinned, group_id, created_at, updated_at, completed_at)
+                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                                 params![
                                     remote_id,
                                     remote_note.get("title").and_then(|v| v.as_str()).unwrap_or(""),
@@ -501,8 +641,10 @@ pub async fn pull_notes(state: State<'_, AppState>) -> Result<String, String> {
                                     if remote_note.get("isCompleted").and_then(|v| v.as_bool()).unwrap_or(false) { 1 } else { 0 },
                                     remote_note.get("priority").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
                                     if remote_note.get("pinned").and_then(|v| v.as_bool()).unwrap_or(false) { 1 } else { 0 },
+                                    remote_note.get("groupId").and_then(|v| v.as_str()),
                                     remote_note.get("createdAt").and_then(|v| v.as_i64()).unwrap_or(0),
                                     remote_updated,
+                                    remote_note.get("completedAt").and_then(|v| v.as_i64()),
                                 ],
                             ) {
                                 Ok(_) => {
