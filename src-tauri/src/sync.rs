@@ -91,6 +91,131 @@ pub async fn test_webdav_connection(
     }
 }
 
+fn get_local_groups(state: &State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
+    let conn = state.db.get_connection();
+    let conn = conn.lock();
+
+    let mut stmt = conn
+        .prepare("SELECT id, name, display_order, created_at FROM groups")
+        .map_err(|e| e.to_string())?;
+
+    let groups = stmt.query_map([], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, String>(0)?,
+            "name": row.get::<_, String>(1)?,
+            "displayOrder": row.get::<_, i32>(2)?,
+            "createdAt": row.get::<_, i64>(3)?,
+        }))
+    })
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+
+    Ok(groups)
+}
+
+async fn upload_local_groups(
+    state: &State<'_, AppState>,
+    client: &WebDAVClient,
+    groups_directory: &str,
+) -> Result<usize, String> {
+    let local_groups = get_local_groups(state)?;
+    let mut uploaded = 0;
+
+    for group in &local_groups {
+        let id = group.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let json_data = serde_json::to_string_pretty(&group).map_err(|e| e.to_string())?;
+        let file_path = format!("{}/{}.json", groups_directory, id);
+
+        client
+            .upload_file(&file_path, json_data.as_bytes())
+            .await
+            .map_err(|e| format!("上传分组失败: {}", e))?;
+
+        uploaded += 1;
+    }
+
+    Ok(uploaded)
+}
+
+async fn delete_remote_groups_missing_locally(
+    state: &State<'_, AppState>,
+    client: &WebDAVClient,
+    groups_directory: &str,
+) -> Result<usize, String> {
+    let local_group_ids: std::collections::HashSet<String> = get_local_groups(state)?
+        .iter()
+        .filter_map(|g| g.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .collect();
+
+    let remote_group_files = client
+        .list_directory(groups_directory)
+        .await
+        .unwrap_or_else(|_| Vec::new());
+
+    let mut deleted = 0;
+    for filename in remote_group_files {
+        if !filename.ends_with(".json") {
+            continue;
+        }
+
+        let remote_id = filename.trim_end_matches(".json");
+        if !local_group_ids.contains(remote_id) {
+            let file_path = format!("{}/{}", groups_directory, filename);
+            if client.delete_file(&file_path).await.is_ok() {
+                deleted += 1;
+            }
+        }
+    }
+
+    Ok(deleted)
+}
+
+async fn download_remote_groups(
+    state: &State<'_, AppState>,
+    client: &WebDAVClient,
+    groups_directory: &str,
+) -> Result<usize, String> {
+    let remote_group_files = client
+        .list_directory(groups_directory)
+        .await
+        .unwrap_or_else(|_| Vec::new());
+
+    let mut downloaded = 0;
+    for filename in remote_group_files {
+        if !filename.ends_with(".json") {
+            continue;
+        }
+
+        let file_path = format!("{}/{}", groups_directory, filename);
+
+        if let Ok(data) = client.download_file(&file_path).await {
+            if let Ok(remote_group) = serde_json::from_slice::<serde_json::Value>(&data) {
+                let remote_id = remote_group.get("id").and_then(|v| v.as_str()).unwrap_or("");
+
+                let conn = state.db.get_connection();
+                let conn = conn.lock();
+
+                conn.execute(
+                    "INSERT OR REPLACE INTO groups (id, name, display_order, created_at)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        remote_id,
+                        remote_group.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                        remote_group.get("displayOrder").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+                        remote_group.get("createdAt").and_then(|v| v.as_i64()).unwrap_or(0),
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+
+                downloaded += 1;
+            }
+        }
+    }
+
+    Ok(downloaded)
+}
+
 /// 增量双向同步（按待办单独存储）
 #[tauri::command]
 pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
@@ -433,14 +558,20 @@ pub async fn push_notes(state: State<'_, AppState>) -> Result<String, String> {
 
     let client = WebDAVClient::new(webdav_config);
     let directory = format!("{}/notes", config.directory);
+    let groups_directory = format!("{}/groups", config.directory);
 
     // 确保目录存在
     let _ = client.create_directory(&config.directory).await;
     let _ = client.create_directory(&directory).await;
+    let _ = client.create_directory(&groups_directory).await;
 
     let last_sync = config.last_sync.unwrap_or(0);
     // 记录本次同步开始的时间（用于下次同步的基准）
     let sync_start_time = chrono::Utc::now().timestamp();
+
+    let groups_uploaded = upload_local_groups(&state, &client, &groups_directory).await?;
+    let groups_deleted =
+        delete_remote_groups_missing_locally(&state, &client, &groups_directory).await?;
 
     let notes = {
         let conn = state.db.get_connection();
@@ -539,7 +670,7 @@ pub async fn push_notes(state: State<'_, AppState>) -> Result<String, String> {
     }
 
     // 仅在有实际操作时更新同步时间（避免空同步推进时间戳）
-    if uploaded > 0 || deleted > 0 {
+    if uploaded > 0 || deleted > 0 || groups_uploaded > 0 || groups_deleted > 0 {
         let conn = state.db.get_connection();
         let conn = conn.lock();
         conn.execute(
@@ -549,7 +680,10 @@ pub async fn push_notes(state: State<'_, AppState>) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     }
 
-    Ok(format!("已上传 {} 个待办，删除云端 {} 个（共 {} 个）", uploaded, deleted, notes.len()))
+    Ok(format!(
+        "已上传 {} 个分组、{} 个待办，删除云端 {} 个分组、{} 个待办（共 {} 个待办）",
+        groups_uploaded, uploaded, groups_deleted, deleted, notes.len()
+    ))
 }
 
 /// 重置同步状态
@@ -586,6 +720,9 @@ pub async fn pull_notes(state: State<'_, AppState>) -> Result<String, String> {
 
     let client = WebDAVClient::new(webdav_config);
     let directory = format!("{}/notes", config.directory);
+    let groups_directory = format!("{}/groups", config.directory);
+
+    let groups_downloaded = download_remote_groups(&state, &client, &groups_directory).await?;
 
     // 获取远程文件列表
     let remote_files = client
@@ -675,9 +812,19 @@ pub async fn pull_notes(state: State<'_, AppState>) -> Result<String, String> {
     }
 
     if !errors.is_empty() {
-        Ok(format!("已下载 {} 个，更新 {} 个，{} 个失败: {}", downloaded, updated, errors.len(), errors.join("; ")))
-    } else if downloaded > 0 || updated > 0 {
-        Ok(format!("已下载 {} 个，更新 {} 个", downloaded, updated))
+        Ok(format!(
+            "已下载 {} 个分组、{} 个待办，更新 {} 个，{} 个失败: {}",
+            groups_downloaded,
+            downloaded,
+            updated,
+            errors.len(),
+            errors.join("; ")
+        ))
+    } else if groups_downloaded > 0 || downloaded > 0 || updated > 0 {
+        Ok(format!(
+            "已下载 {} 个分组、{} 个待办，更新 {} 个",
+            groups_downloaded, downloaded, updated
+        ))
     } else {
         Ok("无需下载，本地已是最新".to_string())
     }

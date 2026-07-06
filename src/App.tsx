@@ -131,8 +131,9 @@ function App() {
           try {
             const result = await syncNotes();
             console.log('Auto sync on startup:', result);
-            // 同步成功后重新加载笔记
+            // 同步成功后重新加载笔记和分组
             loadNotes();
+            loadGroups();
           } catch (error) {
             console.error('Auto sync failed:', error);
           }
@@ -162,6 +163,7 @@ function App() {
           const result = await syncNotes();
           console.log('Auto sync interval:', result);
           loadNotes();
+          loadGroups();
         } else {
           // 如果自动同步被关闭，停止定时器
           if (autoSyncInterval.current) {
@@ -261,24 +263,33 @@ function App() {
     }
   };
 
+  const focusNoteTextarea = (noteId: string, delay = 100) => {
+    setTimeout(() => {
+      const textarea = document.querySelector(
+        `textarea[data-note-id="${noteId}"]`
+      ) as HTMLTextAreaElement | null;
+      textarea?.focus();
+    }, delay);
+  };
+
   // 创建新便签
-  const handleCreateNote = async (forceCreate: boolean = false) => {
+  const handleCreateNote = async (
+    forceCreate: boolean = false,
+    options: Partial<Pick<Note, "groupId" | "pinned">> = {}
+  ) => {
     console.log("Creating note...");
 
     // 先检查是否已有空标题的待办（只在点击 + 按钮时检查，回车时强制创建）
     if (!forceCreate) {
-      const emptyNote = notes.find(n => !n.title.trim() && !n.isCompleted);
+      const emptyNote = notes.find(
+        n =>
+          !n.title.trim() &&
+          !n.isCompleted &&
+          n.groupId === options.groupId &&
+          Boolean(n.pinned) === Boolean(options.pinned)
+      );
       if (emptyNote) {
-        // 如果已有空待办，直接聚焦到它
-        setTimeout(() => {
-          const textareas = document.querySelectorAll('textarea');
-          const emptyTextarea = Array.from(textareas).find(
-            (textarea) => (textarea as HTMLTextAreaElement).value === ""
-          ) as HTMLTextAreaElement;
-          if (emptyTextarea) {
-            emptyTextarea.focus();
-          }
-        }, 50);
+        focusNoteTextarea(emptyNote.id, 50);
         return;
       }
     }
@@ -290,21 +301,13 @@ function App() {
         isTodo: true,
         tags: [],
         priority: 0,
+        groupId: options.groupId,
+        pinned: options.pinned,
       });
       console.log("Note created:", newNote);
       addNote(newNote);
 
-      // 延迟聚焦到新建的输入框（空标题的第一个）
-      setTimeout(() => {
-        const textareas = document.querySelectorAll('textarea');
-        // 找到第一个空值的输入框（就是新建的那个）
-        const emptyTextarea = Array.from(textareas).find(
-          (textarea) => (textarea as HTMLTextAreaElement).value === ""
-        ) as HTMLTextAreaElement;
-        if (emptyTextarea) {
-          emptyTextarea.focus();
-        }
-      }, 100);
+      focusNoteTextarea(newNote.id);
     } catch (error) {
       console.error("Failed to create note:", error);
     }
@@ -372,7 +375,7 @@ function App() {
     }
   };
 
-  // 分组：置顶、自定义分组、未完成、已完成
+  // 分组：置顶、自定义分组、未分类、已完成
   const pinnedNotes = notes
     .filter((n) => n.pinned && !n.isCompleted)
     .sort((a, b) => b.priority - a.priority);
@@ -397,7 +400,7 @@ function App() {
       .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0)),
   }));
 
-  // 无分组的已完成待办
+  // 未分类的已完成待办
   const completedWithoutGroup = notes.filter((n) => n.isCompleted && !n.groupId);
 
   // 将新建的空待办放到最前面
@@ -603,6 +606,7 @@ function App() {
           </button>
           <textarea
             ref={textareaRef}
+            data-note-id={note.id}
             value={localTitle}
             onChange={(e) => {
               setLocalTitle(e.target.value);
@@ -626,7 +630,10 @@ function App() {
 
                 // 如果当前待办为空，强制创建新待办
                 if (!currentContent) {
-                  await handleCreateNote(true);
+                  await handleCreateNote(true, {
+                    groupId: note.groupId,
+                    pinned: note.pinned,
+                  });
                   return;
                 }
 
@@ -636,7 +643,10 @@ function App() {
                 }
 
                 // 强制创建新待办
-                await handleCreateNote(true);
+                await handleCreateNote(true, {
+                  groupId: note.groupId,
+                  pinned: note.pinned,
+                });
               }
             }}
             onClick={() => {
@@ -776,7 +786,7 @@ function App() {
                                 确定删除分组 <span className="font-medium">"{deleteConfirm.groupName}"</span> 吗？
                                 {deleteConfirm.noteCount > 0 && (
                                   <div className="mt-1 text-gray-500">
-                                    分组内的 {deleteConfirm.noteCount} 个待办将移至未完成。
+                                    分组内的 {deleteConfirm.noteCount} 个待办将移至未分类。
                                   </div>
                                 )}
                               </div>
@@ -938,15 +948,7 @@ function App() {
                         pinned: true, // 新建时直接置顶
                       });
                       addNote(newNote);
-                      setTimeout(() => {
-                        const textareas = document.querySelectorAll('textarea');
-                        const emptyTextarea = Array.from(textareas).find(
-                          (textarea) => (textarea as HTMLTextAreaElement).value === ""
-                        ) as HTMLTextAreaElement;
-                        if (emptyTextarea) {
-                          emptyTextarea.focus();
-                        }
-                      }, 100);
+                      focusNoteTextarea(newNote.id);
                     }}
                     className="opacity-0 group-hover:opacity-100 text-cyan-400 hover:text-cyan-500 text-sm transition-opacity"
                     title="新建置顶待办"
@@ -973,7 +975,7 @@ function App() {
                       // 检查分组内是否有待办
                       const hasNotes = groupNotes.length > 0;
                       const message = hasNotes
-                        ? `确定删除分组"${group.name}"吗？\n\n分组内的 ${groupNotes.length} 个待办将移至未完成。`
+                        ? `确定删除分组"${group.name}"吗？\n\n分组内的 ${groupNotes.length} 个待办将移至未分类。`
                         : `确定删除分组"${group.name}"吗？`;
 
                       if (confirm(message)) {
@@ -992,15 +994,7 @@ function App() {
                         groupId: group.id,
                       });
                       addNote(newNote);
-                      setTimeout(() => {
-                        const textareas = document.querySelectorAll('textarea');
-                        const emptyTextarea = Array.from(textareas).find(
-                          (textarea) => (textarea as HTMLTextAreaElement).value === ""
-                        ) as HTMLTextAreaElement;
-                        if (emptyTextarea) {
-                          emptyTextarea.focus();
-                        }
-                      }, 100);
+                      focusNoteTextarea(newNote.id);
                     }}
                   />
                   <div className="space-y-0.5">
@@ -1012,11 +1006,11 @@ function App() {
               )
             ))}
 
-            {/* 未完成待办 */}
+            {/* 未分类待办 */}
             {activeTodos.length > 0 && (
               <div className="mb-4">
                 <div className="text-xs text-gray-400 mb-2 flex items-center justify-between group">
-                  <span>未完成</span>
+                  <span>未分类</span>
                   <button
                     onClick={async () => {
                       const newNote = await createNote({
@@ -1027,15 +1021,7 @@ function App() {
                         priority: 0,
                       });
                       addNote(newNote);
-                      setTimeout(() => {
-                        const textareas = document.querySelectorAll('textarea');
-                        const emptyTextarea = Array.from(textareas).find(
-                          (textarea) => (textarea as HTMLTextAreaElement).value === ""
-                        ) as HTMLTextAreaElement;
-                        if (emptyTextarea) {
-                          emptyTextarea.focus();
-                        }
-                      }, 100);
+                      focusNoteTextarea(newNote.id);
                     }}
                     className="opacity-0 group-hover:opacity-100 text-cyan-400 hover:text-cyan-500 text-sm transition-opacity"
                     title="新建待办"
@@ -1094,7 +1080,7 @@ function App() {
                     )
                   ))}
 
-                  {/* 无分组的已完成待办 */}
+                  {/* 未分类的已完成待办 */}
                   {completedWithoutGroup.length > 0 && (
                     <div>
                       <button
@@ -1117,7 +1103,7 @@ function App() {
                         }}>
                           ▶
                         </span>
-                        <span>无分组</span>
+                        <span>未分类</span>
                         <span className="text-gray-400">({completedWithoutGroup.length})</span>
                       </button>
                       {expandedGroups.has('no-group') && (
@@ -1179,6 +1165,7 @@ function App() {
                       setTimeout(() => {
                         setSyncMessage("");
                         loadNotes();
+                        loadGroups();
                       }, 2000);
                     } catch (error) {
                       setSyncMessage(`下载失败: ${error}`);
@@ -1220,6 +1207,7 @@ function App() {
                       setTimeout(() => {
                         setSyncMessage("");
                         loadNotes();
+                        loadGroups();
                       }, 2000);
                     } catch (error) {
                       setSyncMessage(`同步失败: ${error}`);

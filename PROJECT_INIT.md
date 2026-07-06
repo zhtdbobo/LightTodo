@@ -36,7 +36,7 @@ LightTodo/
 ### 开发模式（推荐先测试）
 
 ```bash
-npm run tauri dev
+pnpm run tauri dev
 ```
 
 这将：
@@ -47,7 +47,7 @@ npm run tauri dev
 ### 生产构建
 
 ```bash
-npm run tauri build
+pnpm run tauri build
 ```
 
 生成的安装包在：`src-tauri/target/release/bundle/`
@@ -56,12 +56,12 @@ npm run tauri build
 
 ### 图标文件
 当前图标是空文件，需要替换为真实图标：
-- 使用工具生成：`npm install -g @tauri-apps/cli`
+- 使用工具生成：`pnpm add -g @tauri-apps/cli`
 - 运行：`cargo tauri icon path/to/icon.png`
 - 或手动替换 `src-tauri/icons/` 下的文件
 
 ### 首次编译
-第一次运行 `npm run tauri dev` 会：
+第一次运行 `pnpm run tauri dev` 会：
 - 下载 Rust 依赖（约 50-100 MB）
 - 编译 Tauri 和依赖包（5-10 分钟）
 - 后续启动会快很多（10-20 秒）
@@ -73,7 +73,7 @@ npm run tauri build
 - [docs/SCHEDULE.md](docs/SCHEDULE.md) - 7 周开发排期
 
 现在可以开始：
-1. 测试运行 `npm run tauri dev`
+1. 测试运行 `pnpm run tauri dev`
 2. 设计数据库 Schema
 3. 实现便签 CRUD 功能
 

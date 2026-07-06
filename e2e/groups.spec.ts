@@ -6,7 +6,7 @@ test.describe('自定义分组功能', () => {
     await page.waitForLoadState('domcontentloaded')
   })
 
-  test('应该显示默认分组', async ({ page }) => {
+  test('应该显示未分类', async ({ page }) => {
     await expect(page.locator('text=未完成')).toBeVisible()
     await expect(page.locator('text=已完成')).toBeVisible()
   })
@@ -61,15 +61,15 @@ test.describe('自定义分组功能', () => {
     await expect(page.locator('text=临时分组')).not.toBeVisible()
   })
 
-  test('不应该能删除或重命名默认分组', async ({ page }) => {
-    // 尝试双击默认分组
+  test('不应该能删除或重命名未分类', async ({ page }) => {
+    // 尝试双击未分类
     const todoGroup = page.locator('text=未完成').first()
     await todoGroup.dblclick()
 
     // 不应该出现输入框
     await expect(page.locator('input[value="未完成"]')).not.toBeVisible()
 
-    // 悬停默认分组
+    // 悬停未分类
     await todoGroup.hover()
 
     // 不应该显示删除按钮

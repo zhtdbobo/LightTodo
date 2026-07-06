@@ -554,13 +554,13 @@ Tauri 自动选择合适的数据目录：
 
 ```bash
 # 开发模式（热重载）
-npm run tauri dev
+pnpm run tauri dev
 
 # 生产构建
-npm run tauri build
+pnpm run tauri build
 
 # 仅构建前端
-npm run build
+pnpm run build
 
 # 类型检查
 tsc --noEmit
@@ -568,7 +568,7 @@ tsc --noEmit
 
 ## 打包产物
 
-运行 `npm run tauri build` 后，产物在：
+运行 `pnpm run tauri build` 后，产物在：
 
 - **Windows**: `src-tauri/target/release/bundle/nsis/LightTodo_0.1.0_x64-setup.exe` (~3-5 MB)
 - **macOS**: `src-tauri/target/release/bundle/dmg/LightTodo_0.1.0_x64.dmg`

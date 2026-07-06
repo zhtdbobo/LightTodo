@@ -65,7 +65,7 @@ initReactGrab({
 
 ## 🚀 下一步
 
-1. 运行 `npm run dev` 启动开发服务器
+1. 运行 `pnpm run dev` 启动开发服务器
 2. 按 `Alt + Shift + G` 激活调试工具
 3. 悬停在任何元素上开始调试
 

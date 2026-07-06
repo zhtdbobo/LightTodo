@@ -30,7 +30,7 @@
 - 下载安装后，验证安装：
   ```bash
   node --version
-  npm --version
+  pnpm --version
   ```
 
 #### 2. 安装 Rust
@@ -49,7 +49,7 @@
 #### 3. 安装 Windows 构建工具（仅 Windows）
 
 - 方式 1: 安装 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)，勾选 "C++ 生成工具"
-- 方式 2: 运行 `npm install --global windows-build-tools`（需要管理员权限）
+- 方式 2: 运行 `pnpm add -g windows-build-tools`（需要管理员权限）
 
 ### 克隆并启动项目
 
@@ -59,15 +59,15 @@ git clone https://github.com/jaridli/LightTodo.git
 cd LightTodo
 
 # 2. 安装前端依赖
-npm install
+pnpm install
 
 # 3. 启动开发服务器
-npm run tauri dev
+pnpm run tauri dev
 ```
 
 ### 首次启动说明
 
-首次运行 `npm run tauri dev` 时：
+首次运行 `pnpm run tauri dev` 时：
 - Rust 会下载并编译依赖，需要 5-10 分钟
 - 编译完成后会自动启动应用
 - 后续启动会快很多（热重载约 1-2 秒）
@@ -76,7 +76,7 @@ npm run tauri dev
 
 ```bash
 # 打包为可执行文件
-npm run tauri build
+pnpm run tauri build
 
 # 输出位置：
 # Windows: src-tauri/target/release/LightTodo.exe
@@ -90,29 +90,29 @@ npm run tauri build
 
 ```bash
 # 运行所有单元测试
-npm test
+pnpm test
 
 # 监听模式（开发时使用）
-npm run test:watch
+pnpm run test:watch
 
 # 生成覆盖率报告
-npm run test:coverage
+pnpm run test:coverage
 ```
 
 ### 运行 E2E 测试
 
 ```bash
 # 安装 Playwright 浏览器（首次运行）
-npx playwright install
+pnpm dlx playwright install
 
 # 运行 E2E 测试
-npm run test:e2e
+pnpm run test:e2e
 
 # 交互式 UI 模式
-npm run test:e2e:ui
+pnpm run test:e2e:ui
 
 # 调试模式
-npm run test:e2e:debug
+pnpm run test:e2e:debug
 ```
 
 ## 📖 使用说明
@@ -401,9 +401,9 @@ CREATE TABLE webdav_config (
 
 1. Fork 本仓库
 2. 克隆到本地：`git clone https://github.com/你的用户名/LightTodo.git`
-3. 安装依赖：`npm install`
+3. 安装依赖：`pnpm install`
 4. 创建特性分支：`git checkout -b feature/AmazingFeature`
-5. 进行开发并测试：`npm run tauri dev`
+5. 进行开发并测试：`pnpm run tauri dev`
 6. 提交更改：`git commit -m 'Add some AmazingFeature'`
 7. 推送到分支：`git push origin feature/AmazingFeature`
 8. 提交 Pull Request

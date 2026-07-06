@@ -37,22 +37,22 @@ e2e/
 
 ### 运行所有单元测试
 ```bash
-npm run test
+pnpm run test
 ```
 
 ### 监听模式
 ```bash
-npm run test:watch
+pnpm run test:watch
 ```
 
 ### 生成覆盖率报告
 ```bash
-npm run test:coverage
+pnpm run test:coverage
 ```
 
 ### 运行 E2E 测试
 ```bash
-npm run test:e2e
+pnpm run test:e2e
 ```
 
 ## 测试覆盖范围
@@ -98,7 +98,7 @@ npm run test:e2e
 📝 待办基本操作（添加、完成、删除、编辑）
 📝 清空已完成
 📝 自定义分组（创建、重命名、删除、移动待办）
-📝 默认分组保护
+📝 未分类保护
 📝 系统托盘功能
 
 ## 测试结果
@@ -136,7 +136,7 @@ global.fetch = vi.fn()
 
 ## 注意事项
 
-1. **E2E 测试需要单独运行**: Playwright 测试不在 `npm run test` 中运行，需使用 `npm run test:e2e`
+1. **E2E 测试需要单独运行**: Playwright 测试不在 `pnpm run test` 中运行，需使用 `pnpm run test:e2e`
 
 2. **Vitest 配置排除 e2e 目录**: E2E 测试文件被排除在单元测试外
 

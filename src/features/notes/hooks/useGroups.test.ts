@@ -19,7 +19,7 @@ describe('useGroups API', () => {
       const mockGroups = [
         {
           id: 'todo',
-          name: '未完成',
+          name: '未分类',
           is_default: true,
           created_at: '2024-01-01',
         },
