@@ -1288,8 +1288,10 @@ function App() {
 
       {/* 同步消息提示 */}
       {syncMessage && (
-        <div className="absolute bottom-14 left-1/2 transform -translate-x-1/2 px-4 py-2 bg-gray-800 text-white text-xs rounded-md shadow-lg z-50 whitespace-nowrap">
-          {syncMessage}
+        <div className="absolute bottom-14 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
+          <div className="max-w-full min-w-0 px-4 py-2 bg-gray-800 text-white text-xs leading-relaxed text-center rounded-md shadow-lg whitespace-normal break-words pointer-events-auto">
+            {syncMessage}
+          </div>
         </div>
       )}
         </div>
