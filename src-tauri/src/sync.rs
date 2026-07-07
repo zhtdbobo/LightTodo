@@ -91,21 +91,35 @@ pub async fn test_webdav_connection(
     }
 }
 
-fn get_local_groups(state: &State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
+fn get_local_groups(state: &State<'_, AppState>, include_deleted: bool) -> Result<Vec<serde_json::Value>, String> {
     let conn = state.db.get_connection();
     let conn = conn.lock();
 
-    let mut stmt = conn
-        .prepare("SELECT id, name, display_order, created_at FROM groups")
-        .map_err(|e| e.to_string())?;
+    let sql = if include_deleted {
+        "SELECT id, name, created_at, updated_at, deleted_at
+         FROM groups"
+    } else {
+        "SELECT id, name, created_at, updated_at, deleted_at
+         FROM groups
+         WHERE deleted_at IS NULL"
+    };
+
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
 
     let groups = stmt.query_map([], |row| {
-        Ok(serde_json::json!({
+        let deleted_at: Option<i64> = row.get(4)?;
+        let mut group = serde_json::json!({
             "id": row.get::<_, String>(0)?,
             "name": row.get::<_, String>(1)?,
-            "displayOrder": row.get::<_, i32>(2)?,
-            "createdAt": row.get::<_, i64>(3)?,
-        }))
+            "createdAt": row.get::<_, i64>(2)?,
+            "updatedAt": row.get::<_, i64>(3)?,
+        });
+
+        if let Some(value) = deleted_at {
+            group["deletedAt"] = serde_json::Value::Number(value.into());
+        }
+
+        Ok(group)
     })
     .map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>()
@@ -118,11 +132,20 @@ async fn upload_local_groups(
     state: &State<'_, AppState>,
     client: &WebDAVClient,
     groups_directory: &str,
+    last_sync: i64,
 ) -> Result<usize, String> {
-    let local_groups = get_local_groups(state)?;
+    let local_groups = get_local_groups(state, true)?;
     let mut uploaded = 0;
+    let is_first_sync = last_sync == 0;
 
     for group in &local_groups {
+        let updated_at = group.get("updatedAt").and_then(|v| v.as_i64()).unwrap_or(0);
+        let deleted_at = group.get("deletedAt").and_then(|v| v.as_i64()).unwrap_or(0);
+
+        if !is_first_sync && updated_at <= last_sync && deleted_at <= last_sync {
+            continue;
+        }
+
         let id = group.get("id").and_then(|v| v.as_str()).unwrap_or("");
         let json_data = serde_json::to_string_pretty(&group).map_err(|e| e.to_string())?;
         let file_path = format!("{}/{}.json", groups_directory, id);
@@ -138,50 +161,18 @@ async fn upload_local_groups(
     Ok(uploaded)
 }
 
-async fn delete_remote_groups_missing_locally(
-    state: &State<'_, AppState>,
-    client: &WebDAVClient,
-    groups_directory: &str,
-) -> Result<usize, String> {
-    let local_group_ids: std::collections::HashSet<String> = get_local_groups(state)?
-        .iter()
-        .filter_map(|g| g.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
-        .collect();
-
-    let remote_group_files = client
-        .list_directory(groups_directory)
-        .await
-        .unwrap_or_else(|_| Vec::new());
-
-    let mut deleted = 0;
-    for filename in remote_group_files {
-        if !filename.ends_with(".json") {
-            continue;
-        }
-
-        let remote_id = filename.trim_end_matches(".json");
-        if !local_group_ids.contains(remote_id) {
-            let file_path = format!("{}/{}", groups_directory, filename);
-            if client.delete_file(&file_path).await.is_ok() {
-                deleted += 1;
-            }
-        }
-    }
-
-    Ok(deleted)
-}
-
 async fn download_remote_groups(
     state: &State<'_, AppState>,
     client: &WebDAVClient,
     groups_directory: &str,
-) -> Result<usize, String> {
+) -> Result<(usize, usize), String> {
     let remote_group_files = client
         .list_directory(groups_directory)
         .await
         .unwrap_or_else(|_| Vec::new());
 
     let mut downloaded = 0;
+    let mut updated = 0;
     for filename in remote_group_files {
         if !filename.ends_with(".json") {
             continue;
@@ -192,28 +183,96 @@ async fn download_remote_groups(
         if let Ok(data) = client.download_file(&file_path).await {
             if let Ok(remote_group) = serde_json::from_slice::<serde_json::Value>(&data) {
                 let remote_id = remote_group.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                if remote_id.is_empty() {
+                    continue;
+                }
+
+                let remote_created = remote_group.get("createdAt").and_then(|v| v.as_i64()).unwrap_or(0);
+                let remote_updated = remote_group
+                    .get("updatedAt")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(remote_created);
+                let remote_deleted = remote_group.get("deletedAt").and_then(|v| v.as_i64());
 
                 let conn = state.db.get_connection();
-                let conn = conn.lock();
+                let mut conn = conn.lock();
 
-                conn.execute(
-                    "INSERT OR REPLACE INTO groups (id, name, display_order, created_at)
-                     VALUES (?1, ?2, ?3, ?4)",
+                let local_updated: Option<i64> = conn
+                    .query_row(
+                        "SELECT updated_at FROM groups WHERE id = ?1",
+                        params![remote_id],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(|e| e.to_string())?;
+
+                let should_apply = match local_updated {
+                    Some(local) => remote_updated > local,
+                    None => true,
+                };
+
+                if !should_apply {
+                    continue;
+                }
+
+                let tx = conn.transaction().map_err(|e| e.to_string())?;
+                tx.execute(
+                    "INSERT OR REPLACE INTO groups
+                     (id, name, created_at, updated_at, deleted_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
                     params![
                         remote_id,
                         remote_group.get("name").and_then(|v| v.as_str()).unwrap_or(""),
-                        remote_group.get("displayOrder").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-                        remote_group.get("createdAt").and_then(|v| v.as_i64()).unwrap_or(0),
+                        remote_created,
+                        remote_updated,
+                        remote_deleted,
                     ],
                 )
                 .map_err(|e| e.to_string())?;
 
-                downloaded += 1;
+                if remote_deleted.is_some() {
+                    tx.execute(
+                        "UPDATE notes SET group_id = NULL, updated_at = ?1 WHERE group_id = ?2",
+                        params![remote_updated, remote_id],
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+
+                tx.commit().map_err(|e| e.to_string())?;
+
+                if local_updated.is_some() {
+                    updated += 1;
+                } else {
+                    downloaded += 1;
+                }
             }
         }
     }
 
-    Ok(downloaded)
+    Ok((downloaded, updated))
+}
+
+fn append_count(parts: &mut Vec<String>, action: &str, count: usize, object: &str) {
+    if count > 0 {
+        parts.push(format!("{} {} 个{}", action, count, object));
+    }
+}
+
+fn format_sync_result(
+    prefix: &str,
+    empty_message: &str,
+    counts: &[(&str, usize, &str)],
+) -> String {
+    let mut parts = Vec::new();
+    for (action, count, object) in counts {
+        append_count(&mut parts, action, *count, object);
+    }
+
+    if parts.is_empty() {
+        empty_message.to_string()
+    } else {
+        format!("{} - {}", prefix, parts.join("，"))
+    }
 }
 
 /// 增量双向同步（按待办单独存储）
@@ -236,6 +295,7 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
 
     let client = WebDAVClient::new(webdav_config);
     let directory = format!("{}/notes", config.directory);
+    let sync_start_time = chrono::Utc::now().timestamp();
 
     // 确保目录存在
     let _ = client.create_directory(&config.directory).await;
@@ -247,115 +307,9 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
     let groups_directory = format!("{}/groups", config.directory);
     let _ = client.create_directory(&groups_directory).await;
 
-    let local_groups: Vec<serde_json::Value> = {
-        let conn_arc = state.db.get_connection();
-        let conn = conn_arc.lock();
-
-        let mut stmt = conn
-            .prepare("SELECT id, name, display_order, created_at FROM groups")
-            .map_err(|e| e.to_string())?;
-
-        let groups_result = stmt.query_map([], |row| {
-            Ok(serde_json::json!({
-                "id": row.get::<_, String>(0)?,
-                "name": row.get::<_, String>(1)?,
-                "displayOrder": row.get::<_, i32>(2)?,
-                "createdAt": row.get::<_, i64>(3)?,
-            }))
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-
-        groups_result
-    };
-
-    // 1.1 上传本地分组
-    let mut groups_uploaded = 0;
-    for group in &local_groups {
-        let id = group.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        let json_data = serde_json::to_string_pretty(&group).map_err(|e| e.to_string())?;
-        let file_path = format!("{}/{}.json", groups_directory, id);
-
-        client
-            .upload_file(&file_path, json_data.as_bytes())
-            .await
-            .map_err(|e| format!("上传分组失败: {}", e))?;
-
-        groups_uploaded += 1;
-    }
-
-    // 1.2 下载远程分组
-    let remote_group_files = client
-        .list_directory(&groups_directory)
-        .await
-        .unwrap_or_else(|_| Vec::new());
-
-    let mut groups_downloaded = 0;
-    for filename in remote_group_files {
-        if !filename.ends_with(".json") {
-            continue;
-        }
-
-        let file_path = format!("{}/{}", groups_directory, filename);
-
-        if let Ok(data) = client.download_file(&file_path).await {
-            if let Ok(remote_group) = serde_json::from_slice::<serde_json::Value>(&data) {
-                let remote_id = remote_group.get("id").and_then(|v| v.as_str()).unwrap_or("");
-
-                // 检查本地是否存在
-                let exists = local_groups.iter().any(|g| {
-                    g.get("id").and_then(|v| v.as_str()).unwrap_or("") == remote_id
-                });
-
-                if !exists {
-                    let conn = state.db.get_connection();
-                    let conn = conn.lock();
-
-                    conn.execute(
-                        "INSERT OR REPLACE INTO groups (id, name, display_order, created_at)
-                         VALUES (?1, ?2, ?3, ?4)",
-                        params![
-                            remote_id,
-                            remote_group.get("name").and_then(|v| v.as_str()).unwrap_or(""),
-                            remote_group.get("displayOrder").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-                            remote_group.get("createdAt").and_then(|v| v.as_i64()).unwrap_or(0),
-                        ],
-                    )
-                    .map_err(|e| e.to_string())?;
-
-                    groups_downloaded += 1;
-                }
-            }
-        }
-    }
-
-    // 1.3 删除云端多余的分组
-    let local_group_ids: std::collections::HashSet<String> = local_groups
-        .iter()
-        .filter_map(|g| g.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
-        .collect();
-
-    let remote_group_files = client
-        .list_directory(&groups_directory)
-        .await
-        .unwrap_or_else(|_| Vec::new());
-
-    let mut groups_deleted = 0;
-    for filename in remote_group_files {
-        if !filename.ends_with(".json") {
-            continue;
-        }
-
-        let remote_id = filename.trim_end_matches(".json");
-
-        if !local_group_ids.contains(remote_id) {
-            let file_path = format!("{}/{}", groups_directory, filename);
-            if client.delete_file(&file_path).await.is_ok() {
-                groups_deleted += 1;
-            }
-        }
-    }
+    let groups_uploaded = upload_local_groups(&state, &client, &groups_directory, last_sync).await?;
+    let (groups_downloaded, groups_updated) =
+        download_remote_groups(&state, &client, &groups_directory).await?;
 
     // 2. 获取本地所有待办（包含删除标记的）
     let local_notes: Vec<serde_json::Value> = {
@@ -406,7 +360,7 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
         let updated_at = note.get("updatedAt").and_then(|v| v.as_i64()).unwrap_or(0);
 
         // 首次同步上传所有，之后只上传修改过的
-        if is_first_sync || updated_at >= last_sync {
+        if is_first_sync || updated_at > last_sync {
             let id = note.get("id").and_then(|v| v.as_str()).unwrap_or("");
             let json_data = serde_json::to_string_pretty(&note).map_err(|e| e.to_string())?;
             let file_path = format!("{}/{}.json", directory, id);
@@ -522,20 +476,28 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
     }
 
     // 6. 仅在有实际操作时更新同步时间
-    if uploaded > 0 || downloaded > 0 || updated > 0 || deleted > 0 || groups_uploaded > 0 || groups_downloaded > 0 || groups_deleted > 0 {
-        let now = chrono::Utc::now().timestamp();
+    if uploaded > 0 || downloaded > 0 || updated > 0 || deleted > 0 || groups_uploaded > 0 || groups_downloaded > 0 || groups_updated > 0 {
         let conn = state.db.get_connection();
         let conn = conn.lock();
         conn.execute(
             "UPDATE webdav_config SET last_sync = ?1 WHERE id = 1",
-            params![now],
+            params![sync_start_time],
         )
         .map_err(|e| e.to_string())?;
     }
 
-    Ok(format!(
-        "同步完成 - 分组(上传 {}, 下载 {}, 删除 {}), 待办(上传 {}, 下载 {}, 更新 {}, 删除 {})",
-        groups_uploaded, groups_downloaded, groups_deleted, uploaded, downloaded, updated, deleted
+    Ok(format_sync_result(
+        "同步完成",
+        "无需同步，本地和云端已是最新",
+        &[
+            ("上传", groups_uploaded, "分组"),
+            ("下载", groups_downloaded, "分组"),
+            ("更新", groups_updated, "分组"),
+            ("上传", uploaded, "待办"),
+            ("下载", downloaded, "待办"),
+            ("更新", updated, "待办"),
+            ("清理云端已删除", deleted, "待办"),
+        ],
     ))
 }
 
@@ -569,9 +531,8 @@ pub async fn push_notes(state: State<'_, AppState>) -> Result<String, String> {
     // 记录本次同步开始的时间（用于下次同步的基准）
     let sync_start_time = chrono::Utc::now().timestamp();
 
-    let groups_uploaded = upload_local_groups(&state, &client, &groups_directory).await?;
-    let groups_deleted =
-        delete_remote_groups_missing_locally(&state, &client, &groups_directory).await?;
+    let groups_uploaded =
+        upload_local_groups(&state, &client, &groups_directory, last_sync).await?;
 
     let notes = {
         let conn = state.db.get_connection();
@@ -618,15 +579,12 @@ pub async fn push_notes(state: State<'_, AppState>) -> Result<String, String> {
     let mut uploaded = 0;
     let is_first_sync = last_sync == 0;
 
-    eprintln!("push_notes: last_sync={}, sync_start_time={}, is_first_sync={}, notes_count={}", last_sync, sync_start_time, is_first_sync, notes.len());
-
     for note in &notes {
         let updated_at = note.get("updatedAt").and_then(|v| v.as_i64()).unwrap_or(0);
         let id = note.get("id").and_then(|v| v.as_str()).unwrap_or("");
 
         // 修改判断逻辑：只要 updated_at > last_sync 就上传（不用 >=）
         let should_upload = is_first_sync || updated_at > last_sync;
-        eprintln!("  note {}: updated_at={}, should_upload={}", id, updated_at, should_upload);
 
         if should_upload {
             let json_data = serde_json::to_string_pretty(&note).map_err(|e| e.to_string())?;
@@ -670,7 +628,7 @@ pub async fn push_notes(state: State<'_, AppState>) -> Result<String, String> {
     }
 
     // 仅在有实际操作时更新同步时间（避免空同步推进时间戳）
-    if uploaded > 0 || deleted > 0 || groups_uploaded > 0 || groups_deleted > 0 {
+    if uploaded > 0 || deleted > 0 || groups_uploaded > 0 {
         let conn = state.db.get_connection();
         let conn = conn.lock();
         conn.execute(
@@ -680,9 +638,14 @@ pub async fn push_notes(state: State<'_, AppState>) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     }
 
-    Ok(format!(
-        "已上传 {} 个分组、{} 个待办，删除云端 {} 个分组、{} 个待办（共 {} 个待办）",
-        groups_uploaded, uploaded, groups_deleted, deleted, notes.len()
+    Ok(format_sync_result(
+        "上传完成",
+        "无需上传，云端已是最新",
+        &[
+            ("上传", groups_uploaded, "分组"),
+            ("上传", uploaded, "待办"),
+            ("清理云端已删除", deleted, "待办"),
+        ],
     ))
 }
 
@@ -722,7 +685,8 @@ pub async fn pull_notes(state: State<'_, AppState>) -> Result<String, String> {
     let directory = format!("{}/notes", config.directory);
     let groups_directory = format!("{}/groups", config.directory);
 
-    let groups_downloaded = download_remote_groups(&state, &client, &groups_directory).await?;
+    let (groups_downloaded, groups_updated) =
+        download_remote_groups(&state, &client, &groups_directory).await?;
 
     // 获取远程文件列表
     let remote_files = client
@@ -812,18 +776,27 @@ pub async fn pull_notes(state: State<'_, AppState>) -> Result<String, String> {
     }
 
     if !errors.is_empty() {
-        Ok(format!(
-            "已下载 {} 个分组、{} 个待办，更新 {} 个，{} 个失败: {}",
-            groups_downloaded,
-            downloaded,
-            updated,
-            errors.len(),
-            errors.join("; ")
-        ))
-    } else if groups_downloaded > 0 || downloaded > 0 || updated > 0 {
-        Ok(format!(
-            "已下载 {} 个分组、{} 个待办，更新 {} 个",
-            groups_downloaded, downloaded, updated
+        let summary = format_sync_result(
+            "下载完成",
+            "下载完成",
+            &[
+                ("下载", groups_downloaded, "分组"),
+                ("更新", groups_updated, "分组"),
+                ("下载", downloaded, "待办"),
+                ("更新", updated, "待办"),
+            ],
+        );
+        Ok(format!("{}，{} 个失败: {}", summary, errors.len(), errors.join("; ")))
+    } else if groups_downloaded > 0 || groups_updated > 0 || downloaded > 0 || updated > 0 {
+        Ok(format_sync_result(
+            "下载完成",
+            "无需下载，本地已是最新",
+            &[
+                ("下载", groups_downloaded, "分组"),
+                ("更新", groups_updated, "分组"),
+                ("下载", downloaded, "待办"),
+                ("更新", updated, "待办"),
+            ],
         ))
     } else {
         Ok("无需下载，本地已是最新".to_string())

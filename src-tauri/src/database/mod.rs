@@ -1,4 +1,4 @@
-use rusqlite::{Connection, Result};
+use rusqlite::{Connection, OptionalExtension, Result};
 use std::path::PathBuf;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -132,15 +132,79 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS groups (
                 id TEXT PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE,
-                display_order INTEGER NOT NULL,
-                created_at INTEGER NOT NULL
+                name TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                deleted_at INTEGER
             )",
             [],
         )?;
 
+        // 迁移：为 groups 表添加增量同步字段（如果不存在）
+        let _ = conn.execute(
+            "ALTER TABLE groups ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE groups ADD COLUMN deleted_at INTEGER",
+            [],
+        );
+        let _ = conn.execute(
+            "UPDATE groups SET updated_at = created_at WHERE updated_at = 0",
+            [],
+        );
+
+        let groups_sql: Option<String> = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'groups'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if groups_sql
+            .as_deref()
+            .map(|sql| {
+                sql.contains("display_order")
+                    || sql.contains("name TEXT NOT NULL UNIQUE")
+            })
+            .unwrap_or(false)
+        {
+            conn.execute("DROP TABLE IF EXISTS groups_old_structure", [])?;
+            conn.execute("ALTER TABLE groups RENAME TO groups_old_structure", [])?;
+            conn.execute(
+                "CREATE TABLE groups (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL DEFAULT 0,
+                    deleted_at INTEGER
+                )",
+                [],
+            )?;
+            conn.execute(
+                "INSERT OR REPLACE INTO groups
+                 (id, name, created_at, updated_at, deleted_at)
+                 SELECT id, name, created_at,
+                        CASE WHEN updated_at = 0 THEN created_at ELSE updated_at END,
+                        deleted_at
+                 FROM groups_old_structure",
+                [],
+            )?;
+            conn.execute("DROP TABLE groups_old_structure", [])?;
+        }
+
+        conn.execute("DROP INDEX IF EXISTS idx_groups_order", [])?;
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_groups_order ON groups(display_order)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_active_name ON groups(name) WHERE deleted_at IS NULL",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_groups_updated_at ON groups(updated_at)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_groups_deleted_at ON groups(deleted_at)",
             [],
         )?;
 

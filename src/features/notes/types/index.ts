@@ -53,8 +53,9 @@ export interface Tag {
 export interface Group {
   id: string;
   name: string;
-  displayOrder: number;
   createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
 }
 
 // 创建分组输入
@@ -66,5 +67,4 @@ export interface CreateGroupInput {
 export interface UpdateGroupInput {
   id: string;
   name?: string;
-  displayOrder?: number;
 }

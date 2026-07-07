@@ -50,6 +50,24 @@ const openSettingsWindow = async () => {
   }
 };
 
+const SYNC_SUCCESS_MESSAGE_MS = 5000;
+const SYNC_ERROR_MESSAGE_MS = 6000;
+
+const groupNameCollator = new Intl.Collator("zh-CN", {
+  sensitivity: "base",
+  numeric: true,
+});
+
+const isEnglishGroupName = (name: string) => /^[A-Za-z]/.test(name.trimStart());
+
+const sortGroupsByDefault = (items: Group[]) =>
+  [...items].sort((a, b) => {
+    const languageOrder =
+      Number(!isEnglishGroupName(a.name)) - Number(!isEnglishGroupName(b.name));
+
+    return languageOrder || groupNameCollator.compare(a.name, b.name);
+  });
+
 function App() {
   const { notes, setNotes, addNote, updateNoteInStore, removeNote } = useNotesStore();
   const [groups, setGroups] = useState<Group[]>([]);
@@ -210,7 +228,7 @@ function App() {
   const loadGroups = async () => {
     try {
       const allGroups = await getAllGroups();
-      setGroups(allGroups);
+      setGroups(sortGroupsByDefault(allGroups));
     } catch (error) {
       console.error("Failed to load groups:", error);
     }
@@ -424,7 +442,7 @@ function App() {
     group,
     onRename,
     onDelete,
-    onAdd
+    onAdd,
   }: {
     group: Group;
     onRename: (id: string, name: string) => void;
@@ -452,33 +470,35 @@ function App() {
     };
 
     return (
-      <div className="text-xs text-gray-400 mb-2 flex items-center justify-between group">
-        {isEditing ? (
-          <input
-            ref={inputRef}
-            type="text"
-            value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-            onBlur={handleSave}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                handleSave();
-              } else if (e.key === 'Escape') {
-                setEditName(group.name);
-                setIsEditing(false);
-              }
-            }}
-            className="flex-1 bg-white border border-cyan-400 rounded px-1 py-0.5 text-gray-700 outline-none"
-          />
-        ) : (
-          <span
-            onDoubleClick={() => setIsEditing(true)}
-            className="cursor-pointer hover:text-gray-600"
-            title="双击编辑"
-          >
-            {group.name}
-          </span>
-        )}
+      <div className="text-xs text-gray-400 mb-2 flex items-center justify-between group rounded px-1 py-0.5 transition-colors">
+        <div className="flex items-center gap-1 min-w-0 flex-1">
+          {isEditing ? (
+            <input
+              ref={inputRef}
+              type="text"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              onBlur={handleSave}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleSave();
+                } else if (e.key === 'Escape') {
+                  setEditName(group.name);
+                  setIsEditing(false);
+                }
+              }}
+              className="flex-1 min-w-0 bg-white border border-cyan-400 rounded px-1 py-0.5 text-gray-700 outline-none"
+            />
+          ) : (
+            <span
+              onDoubleClick={() => setIsEditing(true)}
+              className="cursor-pointer hover:text-gray-600 truncate"
+              title="双击编辑"
+            >
+              {group.name}
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <button
             onClick={onAdd}
@@ -578,7 +598,7 @@ function App() {
 
       try {
         const newGroup = await createGroup({ name: newGroupName });
-        setGroups([...groups, newGroup]);
+        setGroups((currentGroups) => sortGroupsByDefault([...currentGroups, newGroup]));
         await handleMoveToGroup(newGroup.id);
         setNewGroupName("");
       } catch (error) {
@@ -1166,10 +1186,10 @@ function App() {
                         setSyncMessage("");
                         loadNotes();
                         loadGroups();
-                      }, 2000);
+                      }, SYNC_SUCCESS_MESSAGE_MS);
                     } catch (error) {
                       setSyncMessage(`下载失败: ${error}`);
-                      setTimeout(() => setSyncMessage(""), 3000);
+                      setTimeout(() => setSyncMessage(""), SYNC_ERROR_MESSAGE_MS);
                     }
                   }}
                   className="w-full text-left px-3 py-2 hover:bg-gray-50 text-gray-700 text-sm flex items-center justify-center gap-2"
@@ -1185,10 +1205,10 @@ function App() {
                       const { pushNotes } = await import('./features/sync/api');
                       const result = await pushNotes();
                       setSyncMessage(result);
-                      setTimeout(() => setSyncMessage(""), 2000);
+                      setTimeout(() => setSyncMessage(""), SYNC_SUCCESS_MESSAGE_MS);
                     } catch (error) {
                       setSyncMessage(`上传失败: ${error}`);
-                      setTimeout(() => setSyncMessage(""), 3000);
+                      setTimeout(() => setSyncMessage(""), SYNC_ERROR_MESSAGE_MS);
                     }
                   }}
                   className="w-full text-left px-3 py-2 hover:bg-gray-50 text-gray-700 text-sm flex items-center justify-center gap-2"
@@ -1208,10 +1228,10 @@ function App() {
                         setSyncMessage("");
                         loadNotes();
                         loadGroups();
-                      }, 2000);
+                      }, SYNC_SUCCESS_MESSAGE_MS);
                     } catch (error) {
                       setSyncMessage(`同步失败: ${error}`);
-                      setTimeout(() => setSyncMessage(""), 3000);
+                      setTimeout(() => setSyncMessage(""), SYNC_ERROR_MESSAGE_MS);
                     }
                   }}
                   className="w-full text-left px-3 py-2 hover:bg-gray-50 text-gray-700 text-sm flex items-center justify-center gap-2"
@@ -1270,10 +1290,10 @@ function App() {
                       // 重置同步状态
                       await resetSyncState();
                       setSyncMessage('同步状态已重置，自动同步已关闭');
-                      setTimeout(() => setSyncMessage(""), 3000);
+                      setTimeout(() => setSyncMessage(""), SYNC_ERROR_MESSAGE_MS);
                     } catch (error) {
                       setSyncMessage(`重置失败: ${error}`);
-                      setTimeout(() => setSyncMessage(""), 3000);
+                      setTimeout(() => setSyncMessage(""), SYNC_ERROR_MESSAGE_MS);
                     }
                   }}
                   className="px-3 py-1.5 text-sm text-white bg-red-500 hover:bg-red-600 rounded"

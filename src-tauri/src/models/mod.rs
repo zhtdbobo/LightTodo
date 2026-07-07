@@ -55,8 +55,9 @@ pub struct Tag {
 pub struct Group {
     pub id: String,
     pub name: String,
-    pub display_order: i32,
     pub created_at: i64,
+    pub updated_at: i64,
+    pub deleted_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -68,5 +69,4 @@ pub struct CreateGroupInput {
 pub struct UpdateGroupInput {
     pub id: String,
     pub name: Option<String>,
-    pub display_order: Option<i32>,
 }

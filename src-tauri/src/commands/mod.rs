@@ -423,7 +423,14 @@ pub async fn get_all_groups(state: State<'_, AppState>) -> Result<Vec<Group>, St
     let conn = conn.lock();
 
     let mut stmt = conn
-        .prepare("SELECT id, name, display_order, created_at FROM groups ORDER BY display_order")
+        .prepare(
+            "SELECT id, name, created_at, updated_at, deleted_at
+             FROM groups
+             WHERE deleted_at IS NULL
+             ORDER BY
+                CASE WHEN name GLOB '[A-Za-z]*' THEN 0 ELSE 1 END,
+                name COLLATE NOCASE ASC",
+        )
         .map_err(|e| e.to_string())?;
 
     let groups = stmt
@@ -431,8 +438,9 @@ pub async fn get_all_groups(state: State<'_, AppState>) -> Result<Vec<Group>, St
             Ok(Group {
                 id: row.get(0)?,
                 name: row.get(1)?,
-                display_order: row.get::<_, i64>(2)? as i32,
-                created_at: row.get(3)?,
+                created_at: row.get(2)?,
+                updated_at: row.get(3)?,
+                deleted_at: row.get(4)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -450,26 +458,19 @@ pub async fn create_group(input: CreateGroupInput, state: State<'_, AppState>) -
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
 
-    // 获取当前最大的 display_order
-    let max_order: i32 = conn
-        .query_row("SELECT COALESCE(MAX(display_order), -1) FROM groups", [], |row| {
-            row.get::<_, i64>(0).map(|v| v as i32)
-        })
-        .unwrap_or(-1);
-
-    let display_order = max_order + 1;
-
     conn.execute(
-        "INSERT INTO groups (id, name, display_order, created_at) VALUES (?1, ?2, ?3, ?4)",
-        params![&id, &input.name, display_order, now],
+        "INSERT INTO groups (id, name, created_at, updated_at, deleted_at)
+         VALUES (?1, ?2, ?3, ?3, NULL)",
+        params![&id, &input.name, now],
     )
     .map_err(|e| e.to_string())?;
 
     Ok(Group {
         id,
         name: input.name,
-        display_order,
         created_at: now,
+        updated_at: now,
+        deleted_at: None,
     })
 }
 
@@ -477,20 +478,17 @@ pub async fn create_group(input: CreateGroupInput, state: State<'_, AppState>) -
 pub async fn update_group(input: UpdateGroupInput, state: State<'_, AppState>) -> Result<Group, String> {
     let conn = state.db.get_connection();
     let conn = conn.lock();
+    let now = chrono::Utc::now().timestamp();
 
-    let mut updates = Vec::new();
-    let mut update_count = 0;
+    let mut updates = vec!["updated_at = ?1".to_string(), "deleted_at = NULL".to_string()];
+    let mut update_count = 1;
 
     if input.name.is_some() {
         update_count += 1;
         updates.push(format!("name = ?{}", update_count));
     }
-    if input.display_order.is_some() {
-        update_count += 1;
-        updates.push(format!("display_order = ?{}", update_count));
-    }
 
-    if updates.is_empty() {
+    if input.name.is_none() {
         return Err("No fields to update".to_string());
     }
 
@@ -503,12 +501,11 @@ pub async fn update_group(input: UpdateGroupInput, state: State<'_, AppState>) -
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let mut param_index = 1;
 
+    stmt.raw_bind_parameter(param_index, now).map_err(|e| e.to_string())?;
+    param_index += 1;
+
     if let Some(ref name) = input.name {
         stmt.raw_bind_parameter(param_index, name).map_err(|e| e.to_string())?;
-        param_index += 1;
-    }
-    if let Some(display_order) = input.display_order {
-        stmt.raw_bind_parameter(param_index, display_order as i64).map_err(|e| e.to_string())?;
         param_index += 1;
     }
     stmt.raw_bind_parameter(param_index, &input.id).map_err(|e| e.to_string())?;
@@ -518,14 +515,17 @@ pub async fn update_group(input: UpdateGroupInput, state: State<'_, AppState>) -
     // 查询更新后的分组
     let group = conn
         .query_row(
-            "SELECT id, name, display_order, created_at FROM groups WHERE id = ?1",
+            "SELECT id, name, created_at, updated_at, deleted_at
+             FROM groups
+             WHERE id = ?1 AND deleted_at IS NULL",
             [&input.id],
             |row| {
                 Ok(Group {
                     id: row.get(0)?,
                     name: row.get(1)?,
-                    display_order: row.get::<_, i64>(2)? as i32,
-                    created_at: row.get(3)?,
+                    created_at: row.get(2)?,
+                    updated_at: row.get(3)?,
+                    deleted_at: row.get(4)?,
                 })
             },
         )
@@ -537,15 +537,26 @@ pub async fn update_group(input: UpdateGroupInput, state: State<'_, AppState>) -
 #[tauri::command]
 pub async fn delete_group(id: String, state: State<'_, AppState>) -> Result<(), String> {
     let conn = state.db.get_connection();
-    let conn = conn.lock();
+    let mut conn = conn.lock();
+    let now = chrono::Utc::now().timestamp();
+
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     // 将该分组下的所有待办的 group_id 设为 NULL
-    conn.execute("UPDATE notes SET group_id = NULL WHERE group_id = ?1", [&id])
-        .map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE notes SET group_id = NULL, updated_at = ?1 WHERE group_id = ?2",
+        params![now, &id],
+    )
+    .map_err(|e| e.to_string())?;
 
-    // 删除分组
-    conn.execute("DELETE FROM groups WHERE id = ?1", [&id])
-        .map_err(|e| e.to_string())?;
+    // 保留删除墓碑，便于其他设备增量同步删除动作。
+    tx.execute(
+        "UPDATE groups SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
+        params![now, &id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
 
     Ok(())
 }
