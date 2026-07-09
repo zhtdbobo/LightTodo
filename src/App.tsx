@@ -406,7 +406,7 @@ function App() {
   const groupedNotes = groups.map((group) => ({
     group,
     notes: notes
-      .filter((n) => n.groupId === group.id && !n.isCompleted)
+      .filter((n) => n.groupId === group.id && !n.pinned && !n.isCompleted)
       .sort((a, b) => b.priority - a.priority),
   }));
 
