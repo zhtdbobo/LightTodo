@@ -7,6 +7,7 @@ import { Window } from "@tauri-apps/api/window";
 import { WebDAVSettings } from "./features/sync/WebDAVSettings";
 import { syncNotes } from "./features/sync/api";
 import { formatTimestamp, calculateDuration } from "./features/notes/utils/timeFormat";
+import { SimpleMarkdown } from "./features/notes/components/SimpleMarkdown";
 
 // 仅在开发模式下导入 react-grab
 const initReactGrab = import.meta.env.DEV
@@ -528,6 +529,7 @@ function App() {
     const [showGroupInput, setShowGroupInput] = useState(false);
     const [newGroupName, setNewGroupName] = useState("");
     const [isExpanded, setIsExpanded] = useState(false);
+    const [isEditing, setIsEditing] = useState(false);
     const [deleteConfirm, setDeleteConfirm] = useState<{ groupId: string; groupName: string; noteCount: number } | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
 
@@ -566,6 +568,13 @@ function App() {
       adjustHeight();
     }, [localTitle, note.title]);
 
+    useEffect(() => {
+      if (isEditing) {
+        textareaRef.current?.focus();
+        adjustHeight();
+      }
+    }, [isEditing]);
+
     const handleLocalBlur = async () => {
       // 失焦时才保存到数据库
       if (localTitle.trim() !== note.title) {
@@ -576,6 +585,8 @@ function App() {
       if (!localTitle.trim()) {
         await handleDelete(note);
       }
+
+      setIsEditing(false);
     };
 
     const handleMoveToGroup = async (groupId: string | null) => {
@@ -624,6 +635,7 @@ function App() {
           >
             {getPriorityEmoji(note.priority) || "⚪"}
           </button>
+          {isEditing || !localTitle.trim() ? (
           <textarea
             ref={textareaRef}
             data-note-id={note.id}
@@ -634,6 +646,7 @@ function App() {
               adjustHeight();
             }}
             onBlur={handleLocalBlur}
+            onFocus={() => setIsEditing(true)}
             onCompositionStart={() => {
               composingRef.current = true;
             }}
@@ -686,6 +699,34 @@ function App() {
             rows={1}
             style={{ minHeight: '20px' }}
           />
+          ) : (
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => {
+                if (note.isCompleted) {
+                  setIsExpanded(!isExpanded);
+                  return;
+                }
+
+                setIsEditing(true);
+              }}
+              onDoubleClick={() => setIsEditing(true)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === "F2") {
+                  event.preventDefault();
+                  setIsEditing(true);
+                }
+              }}
+              className={`simple-markdown-preview flex-1 min-w-0 cursor-text rounded-sm text-sm leading-snug outline-none focus:ring-1 focus:ring-cyan-200 ${
+                note.isCompleted
+                  ? "line-through text-gray-300 cursor-pointer"
+                  : "text-gray-700"
+              }`}
+            >
+              <SimpleMarkdown text={localTitle} />
+            </div>
+          )}
 
           {/* 三点菜单按钮 */}
           <div className="relative flex-shrink-0" ref={menuRef}>

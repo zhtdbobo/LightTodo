@@ -60,3 +60,108 @@ body {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
+
+.simple-markdown-preview {
+  overflow-wrap: anywhere;
+}
+
+.simple-markdown-preview p,
+.simple-markdown-preview ul,
+.simple-markdown-preview ol,
+.simple-markdown-preview blockquote,
+.simple-markdown-preview pre {
+  margin: 0 0 0.25rem;
+}
+
+.simple-markdown-preview > :last-child {
+  margin-bottom: 0;
+}
+
+.simple-markdown-preview h1,
+.simple-markdown-preview h2,
+.simple-markdown-preview h3,
+.simple-markdown-preview h4,
+.simple-markdown-preview h5,
+.simple-markdown-preview h6 {
+  margin: 0 0 0.25rem;
+  line-height: 1.25;
+}
+
+.simple-markdown-preview h1 {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.simple-markdown-preview h2 {
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.simple-markdown-preview h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.simple-markdown-preview h4 {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.simple-markdown-preview h5 {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.simple-markdown-preview h6 {
+  color: #64748b;
+  font-size: 0.825rem;
+  font-weight: 600;
+}
+
+.simple-markdown-preview ul,
+.simple-markdown-preview ol {
+  padding-left: 1.1rem;
+}
+
+.simple-markdown-preview ul {
+  list-style: disc;
+}
+
+.simple-markdown-preview ol {
+  list-style: decimal;
+}
+
+.simple-markdown-preview blockquote {
+  border-left: 2px solid #bae6fd;
+  color: #64748b;
+  padding-left: 0.5rem;
+}
+
+.simple-markdown-preview code {
+  background: #f1f5f9;
+  border-radius: 3px;
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.85em;
+  padding: 0.05rem 0.25rem;
+}
+
+.simple-markdown-preview pre {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  overflow-x: auto;
+  padding: 0.35rem 0.45rem;
+}
+
+.simple-markdown-preview pre code {
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+}
+
+.simple-markdown-preview a {
+  color: #0891b2;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
