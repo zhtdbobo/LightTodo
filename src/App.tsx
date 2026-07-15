@@ -70,6 +70,10 @@ const sortGroupsByDefault = (items: Group[]) =>
     return languageOrder || groupNameCollator.compare(a.name, b.name);
   });
 
+const groupTitleFont = {
+  fontFamily: '"Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif',
+};
+
 function App() {
   const { notes, setNotes, addNote, updateNoteInStore, removeNote } = useNotesStore();
   const [groups, setGroups] = useState<Group[]>([]);
@@ -466,8 +470,11 @@ function App() {
     };
 
     return (
-      <div className="text-xs text-gray-400 mb-2 flex items-center justify-between group rounded px-1 py-0.5 transition-colors">
-        <div className="flex items-center gap-1 min-w-0 flex-1">
+      <div className="mb-2 -ml-2 flex items-center justify-between group rounded py-0.5 transition-colors">
+        <div
+          className="flex items-center gap-1.5 min-w-0 flex-1 text-[13px] font-[550] text-gray-600"
+          style={groupTitleFont}
+        >
           {isEditing ? (
             <input
               ref={inputRef}
@@ -522,12 +529,18 @@ function App() {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const [showMenu, setShowMenu] = useState(false);
     const [showGroupInput, setShowGroupInput] = useState(false);
-    const [deadlineValue, setDeadlineValue] = useState(toDateTimeLocalValue(note.deadline));
+    const [deadlineDraftValue, setDeadlineDraftValue] = useState(toDateTimeLocalValue(note.deadline));
+    const [showDeadlinePicker, setShowDeadlinePicker] = useState(false);
+    const [deadlinePickerMonth, setDeadlinePickerMonth] = useState(
+      () => new Date(note.deadline ?? Date.now())
+    );
     const [newGroupName, setNewGroupName] = useState("");
     const [isExpanded, setIsExpanded] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
+    const [openMenuUpward, setOpenMenuUpward] = useState(false);
     const [deleteConfirm, setDeleteConfirm] = useState<{ groupId: string; groupName: string; noteCount: number } | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
+    const menuButtonRef = useRef<HTMLButtonElement>(null);
 
     // 点击外部关闭菜单
     useEffect(() => {
@@ -535,6 +548,7 @@ function App() {
         if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
           setShowMenu(false);
           setShowGroupInput(false);
+          setShowDeadlinePicker(false);
           setDeleteConfirm(null);
         }
       };
@@ -560,7 +574,9 @@ function App() {
     }, [note.title]);
 
     useEffect(() => {
-      setDeadlineValue(toDateTimeLocalValue(note.deadline));
+      const nextDeadlineValue = toDateTimeLocalValue(note.deadline);
+      setDeadlineDraftValue(nextDeadlineValue);
+      setDeadlinePickerMonth(new Date(note.deadline ?? Date.now()));
     }, [note.deadline]);
 
     // 当内容变化时调整高度
@@ -574,6 +590,17 @@ function App() {
         adjustHeight();
       }
     }, [isEditing]);
+
+    const toggleMenu = () => {
+      if (!showMenu) {
+        const rect = menuButtonRef.current?.getBoundingClientRect();
+        setOpenMenuUpward(rect ? window.innerHeight - rect.bottom < 260 : false);
+        setShowGroupInput(false);
+        setShowDeadlinePicker(false);
+        setDeleteConfirm(null);
+      }
+      setShowMenu((current) => !current);
+    };
 
     const handleLocalBlur = async () => {
       // 失焦时才保存到数据库
@@ -611,7 +638,62 @@ function App() {
         clearDeadline: deadline == null,
       });
       updateNoteInStore(updated);
-      setDeadlineValue(value);
+    };
+
+    const getDeadlineDraftDate = () => {
+      const fallback = note.deadline ?? Date.now() + 60 * 60 * 1000;
+      const timestamp = fromDateTimeLocalValue(deadlineDraftValue) ?? fallback;
+      const date = new Date(timestamp);
+      date.setSeconds(0, 0);
+      return date;
+    };
+
+    const updateDeadlineDraftDate = (date: Date) => {
+      date.setSeconds(0, 0);
+      setDeadlineDraftValue(toDateTimeLocalValue(date.getTime()));
+      setDeadlinePickerMonth(new Date(date.getFullYear(), date.getMonth(), 1));
+    };
+
+    const selectDeadlineDay = (day: number) => {
+      const next = getDeadlineDraftDate();
+      next.setFullYear(deadlinePickerMonth.getFullYear(), deadlinePickerMonth.getMonth(), day);
+      updateDeadlineDraftDate(next);
+    };
+
+    const shiftDeadlinePickerMonth = (offset: number) => {
+      setDeadlinePickerMonth(
+        (current) => new Date(current.getFullYear(), current.getMonth() + offset, 1)
+      );
+    };
+
+    const setDeadlineTimePart = (part: "hour" | "minute", value: string) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return;
+
+      const next = getDeadlineDraftDate();
+      if (part === "hour") {
+        next.setHours(Math.max(0, Math.min(23, parsed)));
+      } else {
+        next.setMinutes(Math.max(0, Math.min(59, parsed)));
+      }
+      updateDeadlineDraftDate(next);
+    };
+
+    const handleConfirmDeadline = async () => {
+      await handleDeadlineChange(deadlineDraftValue);
+      setShowMenu(false);
+      setShowGroupInput(false);
+      setShowDeadlinePicker(false);
+      setDeleteConfirm(null);
+    };
+
+    const handleClearDeadline = async () => {
+      setDeadlineDraftValue("");
+      await handleDeadlineChange("");
+      setShowMenu(false);
+      setShowGroupInput(false);
+      setShowDeadlinePicker(false);
+      setDeleteConfirm(null);
     };
 
     const handleCreateAndMoveToGroup = async () => {
@@ -626,6 +708,34 @@ function App() {
         console.error("Failed to create group:", error);
       }
     };
+
+    const deadlineDraftDate = getDeadlineDraftDate();
+    const deadlineDisplayValue = deadlineDraftValue
+      ? deadlineDraftValue.replace("T", " ")
+      : "选择截止时间";
+    const deadlineMonthLabel = deadlinePickerMonth.toLocaleDateString("zh-CN", {
+      year: "numeric",
+      month: "long",
+    });
+    const firstDayOfDeadlineMonth = new Date(
+      deadlinePickerMonth.getFullYear(),
+      deadlinePickerMonth.getMonth(),
+      1
+    );
+    const daysInDeadlineMonth = new Date(
+      deadlinePickerMonth.getFullYear(),
+      deadlinePickerMonth.getMonth() + 1,
+      0
+    ).getDate();
+    const deadlineCalendarDays: Array<number | null> = [
+      ...Array.from({ length: firstDayOfDeadlineMonth.getDay() }, () => null),
+      ...Array.from({ length: daysInDeadlineMonth }, (_, index) => index + 1),
+    ];
+    while (deadlineCalendarDays.length % 7 !== 0) {
+      deadlineCalendarDays.push(null);
+    }
+    const deadlineHour = String(deadlineDraftDate.getHours()).padStart(2, "0");
+    const deadlineMinute = String(deadlineDraftDate.getMinutes()).padStart(2, "0");
 
     return (
       <div className="space-y-0.5">
@@ -645,6 +755,7 @@ function App() {
           >
             {getPriorityEmoji(note.priority) || "⚪"}
           </button>
+          <div className="flex-1 min-w-0 space-y-0.5">
           {isEditing || !localTitle.trim() ? (
           <textarea
             ref={textareaRef}
@@ -698,7 +809,7 @@ function App() {
                 setIsExpanded(!isExpanded);
               }
             }}
-            className={`flex-1 bg-transparent border-none outline-none text-sm resize-none overflow-hidden ${
+            className={`w-full bg-transparent border-none outline-none text-sm resize-none overflow-hidden ${
               note.isCompleted
                 ? "line-through text-gray-300"
                 : "text-gray-700"
@@ -728,7 +839,7 @@ function App() {
                   setIsEditing(true);
                 }
               }}
-              className={`simple-markdown-preview flex-1 min-w-0 cursor-text rounded-sm text-sm leading-snug outline-none focus:ring-1 focus:ring-cyan-200 ${
+              className={`simple-markdown-preview w-full min-w-0 cursor-text rounded-sm text-sm leading-snug outline-none focus:ring-1 focus:ring-cyan-200 ${
                 note.isCompleted
                   ? "line-through text-gray-300 cursor-pointer"
                   : "text-gray-700"
@@ -741,16 +852,18 @@ function App() {
           {note.deadline != null && (() => {
             const status = getDeadlineStatus(note.deadline, currentTime);
             return (
-              <span className={`text-[10px] whitespace-nowrap mt-0.5 ${status.overdue ? "text-red-500" : "text-orange-500"}`}>
+              <div className={`text-[10px] leading-none ${status.overdue ? "text-red-500" : "text-orange-500"}`}>
                 {status.label}
-              </span>
+              </div>
             );
           })()}
+          </div>
 
           {/* 三点菜单按钮 */}
           <div className="relative flex-shrink-0" ref={menuRef}>
             <button
-              onClick={() => setShowMenu(!showMenu)}
+              ref={menuButtonRef}
+              onClick={toggleMenu}
               className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600 text-sm transition"
               title="更多操作"
             >
@@ -759,7 +872,7 @@ function App() {
 
             {/* 下拉菜单 */}
             {showMenu && (
-              <div className="absolute right-0 top-6 bg-white border border-gray-200 rounded-md shadow-lg py-0.5 z-50 min-w-[100px] text-xs">
+              <div className={`absolute right-0 ${openMenuUpward ? "bottom-6" : "top-6"} bg-white border border-gray-200 rounded-md shadow-lg py-0.5 z-50 w-60 max-w-[calc(100vw-2rem)] max-h-[min(420px,calc(100vh-80px))] overflow-y-auto text-xs`}>
                 {note.isCompleted ? (
                   <>
                     <button
@@ -784,22 +897,119 @@ function App() {
                   </>
                 ) : (
                   <>
-                    <div className="px-3 py-1.5 border-b border-gray-100">
+                    <div
+                      className="px-3 py-1.5 border-b border-gray-100"
+                      onMouseDown={() => {
+                        setShowGroupInput(false);
+                        setDeleteConfirm(null);
+                      }}
+                      onFocusCapture={() => {
+                        setShowGroupInput(false);
+                        setDeleteConfirm(null);
+                      }}
+                    >
                       <label className="block text-gray-500 mb-1">截止时间</label>
-                      <input
+                      <button
+                        type="button"
                         aria-label="截止时间"
-                        type="datetime-local"
-                        value={deadlineValue}
-                        onChange={(event) => void handleDeadlineChange(event.target.value)}
-                        className="w-full border border-gray-200 rounded px-1 py-0.5 text-gray-700"
-                      />
-                      {note.deadline != null && (
-                        <button
-                          onClick={() => void handleDeadlineChange("")}
-                          className="mt-1 text-red-500 hover:text-red-600"
-                        >
-                          清除截止时间
-                        </button>
+                        onClick={() => setShowDeadlinePicker((current) => !current)}
+                        className="w-full border border-gray-200 rounded px-2 py-1 text-left text-gray-700 hover:bg-gray-50"
+                      >
+                        <span className={deadlineDraftValue ? "" : "text-gray-400"}>
+                          {deadlineDisplayValue}
+                        </span>
+                      </button>
+                      {showDeadlinePicker && (
+                        <div className="mt-1 rounded-md border border-gray-200 bg-white p-2 shadow-sm">
+                          <div className="flex items-center justify-between mb-1">
+                            <button
+                              type="button"
+                              onClick={() => shiftDeadlinePickerMonth(-1)}
+                              className="w-7 h-6 rounded border border-gray-200 text-gray-500 hover:bg-gray-50"
+                              aria-label="上个月"
+                            >
+                              ‹
+                            </button>
+                            <div className="text-gray-700 font-medium">{deadlineMonthLabel}</div>
+                            <button
+                              type="button"
+                              onClick={() => shiftDeadlinePickerMonth(1)}
+                              className="w-7 h-6 rounded border border-gray-200 text-gray-500 hover:bg-gray-50"
+                              aria-label="下个月"
+                            >
+                              ›
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-7 gap-0.5 text-center text-[10px] text-gray-400 mb-0.5">
+                            {["日", "一", "二", "三", "四", "五", "六"].map((day) => (
+                              <div key={day}>{day}</div>
+                            ))}
+                          </div>
+                          <div className="grid grid-cols-7 gap-0.5">
+                            {deadlineCalendarDays.map((day, index) => {
+                              const selected = day != null
+                                && deadlineDraftValue
+                                && deadlineDraftDate.getFullYear() === deadlinePickerMonth.getFullYear()
+                                && deadlineDraftDate.getMonth() === deadlinePickerMonth.getMonth()
+                                && deadlineDraftDate.getDate() === day;
+
+                              return day == null ? (
+                                <div key={`empty-${index}`} className="h-6" />
+                              ) : (
+                                <button
+                                  key={day}
+                                  type="button"
+                                  onClick={() => selectDeadlineDay(day)}
+                                  className={`h-6 rounded text-center ${
+                                    selected
+                                      ? "bg-cyan-400 text-white"
+                                      : "text-gray-700 hover:bg-gray-50"
+                                  }`}
+                                >
+                                  {day}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="mt-2 flex items-center gap-1">
+                            <input
+                              aria-label="小时"
+                              type="number"
+                              min={0}
+                              max={23}
+                              value={deadlineHour}
+                              onChange={(event) => setDeadlineTimePart("hour", event.target.value)}
+                              className="w-12 border border-gray-200 rounded px-1 py-0.5 text-center text-gray-700"
+                            />
+                            <span className="text-gray-400">:</span>
+                            <input
+                              aria-label="分钟"
+                              type="number"
+                              min={0}
+                              max={59}
+                              value={deadlineMinute}
+                              onChange={(event) => setDeadlineTimePart("minute", event.target.value)}
+                              className="w-12 border border-gray-200 rounded px-1 py-0.5 text-center text-gray-700"
+                            />
+                            <div className="flex-1" />
+                            {(note.deadline != null || deadlineDraftValue) && (
+                              <button
+                                type="button"
+                                onClick={() => void handleClearDeadline()}
+                                className="text-red-500 hover:text-red-600"
+                              >
+                                清除
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void handleConfirmDeadline()}
+                              className="px-2 py-1 rounded bg-cyan-400 text-white hover:bg-cyan-500"
+                            >
+                              确定
+                            </button>
+                          </div>
+                        </div>
                       )}
                     </div>
 
@@ -815,7 +1025,7 @@ function App() {
 
                       {/* 分组子菜单 - 弹出到左侧 */}
                       {showGroupInput && (
-                        <div className="absolute right-full top-0 mr-0.5 bg-white border border-gray-200 rounded-md shadow-lg py-0.5 min-w-[120px]">
+                        <div className="mt-0.5 bg-white border border-gray-200 rounded-md shadow-lg py-0.5 w-full">
                           {groups.map((group) => (
                             <div
                               key={group.id}
@@ -870,7 +1080,7 @@ function App() {
 
                           {/* 删除确认弹窗 */}
                           {deleteConfirm && (
-                            <div className="absolute right-full top-0 mr-2 bg-white border border-gray-200 rounded-md shadow-xl p-3 w-48 z-50">
+                            <div className="mx-2 my-1 bg-white border border-gray-200 rounded-md shadow-xl p-3">
                               <div className="text-xs text-gray-700 mb-2">
                                 确定删除分组 <span className="font-medium">"{deleteConfirm.groupName}"</span> 吗？
                                 {deleteConfirm.noteCount > 0 && (
@@ -1024,8 +1234,13 @@ function App() {
             {/* 今日智能分组 */}
             {(
               <div className="mb-4">
-                <div className="text-xs text-gray-400 mb-2 flex items-center justify-between group">
-                  <span>今日（{todayNotes.length}）</span>
+                <div className="mb-2 -ml-2 flex items-center justify-between group">
+                  <div
+                    className="flex items-center gap-1.5 rounded border border-cyan-100 bg-cyan-50 px-1.5 py-0.5 text-[13px] font-[550] text-gray-700"
+                    style={groupTitleFont}
+                  >
+                    <span>今日</span>
+                  </div>
                   <button
                     onClick={async () => {
                       const newNote = await createNote({
@@ -1045,7 +1260,7 @@ function App() {
                     +
                   </button>
                 </div>
-                <div className="space-y-0.5 bg-cyan-50/20 rounded-lg p-2">
+                <div className="space-y-0.5 bg-cyan-50/20 rounded-lg">
                   {todayNotes.length === 0 ? (
                     <div className="text-xs text-gray-300 py-1">暂无设置截止时间的待办</div>
                   ) : (
@@ -1102,8 +1317,13 @@ function App() {
             {/* 未分类待办 */}
             {activeTodos.length > 0 && (
               <div className="mb-4">
-                <div className="text-xs text-gray-400 mb-2 flex items-center justify-between group">
-                  <span>未分类</span>
+                <div className="mb-2 -ml-2 flex items-center justify-between group">
+                  <div
+                    className="flex items-center gap-1.5 text-[13px] font-[550] text-gray-600"
+                    style={groupTitleFont}
+                  >
+                    <span>未分类</span>
+                  </div>
                   <button
                     onClick={async () => {
                       const newNote = await createNote({
