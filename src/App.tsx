@@ -472,7 +472,7 @@ function App() {
     return (
       <div className="mb-2 -ml-2 flex items-center justify-between group rounded py-0.5 transition-colors">
         <div
-          className="flex items-center gap-1.5 min-w-0 flex-1 text-[13px] font-[550] text-gray-600"
+          className="flex items-center gap-1.5 min-w-0 flex-1 text-[13px] text-gray-600"
           style={groupTitleFont}
         >
           {isEditing ? (
@@ -1236,7 +1236,7 @@ function App() {
               <div className="mb-4">
                 <div className="mb-2 -ml-2 flex items-center justify-between group">
                   <div
-                    className="flex items-center gap-1.5 rounded border border-cyan-100 bg-cyan-50 px-1.5 py-0.5 text-[13px] font-[550] text-gray-700"
+                    className="flex items-center gap-1.5 text-[13px] text-amber-600"
                     style={groupTitleFont}
                   >
                     <span>今日</span>
@@ -1319,7 +1319,7 @@ function App() {
               <div className="mb-4">
                 <div className="mb-2 -ml-2 flex items-center justify-between group">
                   <div
-                    className="flex items-center gap-1.5 text-[13px] font-[550] text-gray-600"
+                    className="flex items-center gap-1.5 text-[13px] text-gray-600"
                     style={groupTitleFont}
                   >
                     <span>未分类</span>
