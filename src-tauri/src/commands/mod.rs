@@ -16,7 +16,7 @@ pub async fn get_all_notes(state: State<'_, AppState>) -> Result<Vec<Note>, Stri
     let mut stmt = conn
         .prepare(
             "SELECT id, title, content, is_todo, is_completed, color, pinned, priority,
-                    created_at, updated_at, synced_at, group_id, completed_at
+                    created_at, updated_at, synced_at, group_id, completed_at, deadline
              FROM notes
              ORDER BY pinned DESC, priority DESC, updated_at DESC",
         )
@@ -41,6 +41,7 @@ pub async fn get_all_notes(state: State<'_, AppState>) -> Result<Vec<Note>, Stri
                 synced_at: row.get(10)?,
                 group_id: row.get(11)?,
                 completed_at: row.get(12)?,
+                deadline: row.get(13)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -65,7 +66,7 @@ pub async fn get_note_by_id(id: String, state: State<'_, AppState>) -> Result<Op
     let mut stmt = conn
         .prepare(
             "SELECT id, title, content, is_todo, is_completed, color, pinned, priority,
-                    created_at, updated_at, synced_at, group_id, completed_at
+                    created_at, updated_at, synced_at, group_id, completed_at, deadline
              FROM notes WHERE id = ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -87,6 +88,7 @@ pub async fn get_note_by_id(id: String, state: State<'_, AppState>) -> Result<Op
                 synced_at: row.get(10)?,
                 group_id: row.get(11)?,
                 completed_at: row.get(12)?,
+                deadline: row.get(13)?,
             })
         })
         .optional()
@@ -113,8 +115,8 @@ pub async fn create_note(input: CreateNoteInput, state: State<'_, AppState>) -> 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     tx.execute(
-        "INSERT INTO notes (id, title, content, is_todo, is_completed, color, pinned, priority, created_at, updated_at, group_id)
-         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, ?8, ?9)",
+        "INSERT INTO notes (id, title, content, is_todo, is_completed, color, pinned, priority, created_at, updated_at, group_id, deadline)
+         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, ?8, ?9, ?10)",
         params![
             &id,
             &input.title,
@@ -125,6 +127,7 @@ pub async fn create_note(input: CreateNoteInput, state: State<'_, AppState>) -> 
             priority,
             now,
             &input.group_id,
+            input.deadline,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -151,6 +154,7 @@ pub async fn create_note(input: CreateNoteInput, state: State<'_, AppState>) -> 
         updated_at: now,
         synced_at: None,
         completed_at: None,
+        deadline: input.deadline,
     })
 }
 
@@ -205,6 +209,10 @@ pub async fn update_note(input: UpdateNoteInput, state: State<'_, AppState>) -> 
         if input.group_id.is_some() {
             update_count += 1;
             updates.push(format!("group_id = ?{}", update_count));
+        }
+        if input.deadline.is_some() || input.clear_deadline.unwrap_or(false) {
+            update_count += 1;
+            updates.push(format!("deadline = ?{}", update_count));
         }
 
         let sql = format!(
@@ -261,6 +269,10 @@ pub async fn update_note(input: UpdateNoteInput, state: State<'_, AppState>) -> 
                 stmt.raw_bind_parameter(param_index, group_id).map_err(|e| e.to_string())?;
                 param_index += 1;
             }
+            if input.deadline.is_some() || input.clear_deadline.unwrap_or(false) {
+                stmt.raw_bind_parameter(param_index, input.deadline).map_err(|e| e.to_string())?;
+                param_index += 1;
+            }
             stmt.raw_bind_parameter(param_index, &input.id).map_err(|e| e.to_string())?;
 
             stmt.raw_execute().map_err(|e| e.to_string())?;
@@ -305,7 +317,7 @@ pub async fn search_notes(query: String, state: State<'_, AppState>) -> Result<V
     let mut stmt = conn
         .prepare(
             "SELECT id, title, content, is_todo, is_completed, color, pinned, priority,
-                    created_at, updated_at, synced_at, group_id, completed_at
+                    created_at, updated_at, synced_at, group_id, completed_at, deadline
              FROM notes
              WHERE title LIKE ?1 OR content LIKE ?1
              ORDER BY pinned DESC, priority DESC, updated_at DESC",
@@ -329,6 +341,7 @@ pub async fn search_notes(query: String, state: State<'_, AppState>) -> Result<V
                 synced_at: row.get(10)?,
                 group_id: row.get(11)?,
                 completed_at: row.get(12)?,
+                deadline: row.get(13)?,
             })
         })
         .map_err(|e| e.to_string())?;

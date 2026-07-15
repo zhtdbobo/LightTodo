@@ -317,12 +317,13 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
         let conn = conn.lock();
 
         let mut stmt = conn
-            .prepare("SELECT id, title, content, is_todo, is_completed, priority, pinned, group_id, created_at, updated_at, completed_at FROM notes")
+            .prepare("SELECT id, title, content, is_todo, is_completed, priority, pinned, group_id, created_at, updated_at, completed_at, deadline FROM notes")
             .map_err(|e| e.to_string())?;
 
         let notes_result = stmt.query_map([], |row| {
             let group_id: Option<String> = row.get(7)?;
             let completed_at: Option<i64> = row.get(10)?;
+            let deadline: Option<i64> = row.get(11)?;
             let mut note = serde_json::json!({
                 "id": row.get::<_, String>(0)?,
                 "title": row.get::<_, String>(1)?,
@@ -341,6 +342,9 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
 
             if let Some(cat) = completed_at {
                 note["completedAt"] = serde_json::Value::Number(cat.into());
+            }
+            if let Some(value) = deadline {
+                note["deadline"] = serde_json::Value::Number(value.into());
             }
 
             Ok(note)
@@ -445,8 +449,8 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
                         let conn = conn.lock();
 
                         conn.execute(
-                            "INSERT OR REPLACE INTO notes (id, title, content, is_todo, is_completed, priority, pinned, group_id, created_at, updated_at, completed_at)
-                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                            "INSERT OR REPLACE INTO notes (id, title, content, is_todo, is_completed, priority, pinned, group_id, created_at, updated_at, completed_at, deadline)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                             params![
                                 remote_id,
                                 remote_note.get("title").and_then(|v| v.as_str()).unwrap_or(""),
@@ -459,6 +463,7 @@ pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
                                 remote_note.get("createdAt").and_then(|v| v.as_i64()).unwrap_or(0),
                                 remote_updated,
                                 remote_note.get("completedAt").and_then(|v| v.as_i64()),
+                                remote_note.get("deadline").and_then(|v| v.as_i64()),
                             ],
                         )
                         .map_err(|e| e.to_string())?;
@@ -539,13 +544,14 @@ pub async fn push_notes(state: State<'_, AppState>) -> Result<String, String> {
         let conn = conn.lock();
 
         let mut stmt = conn
-            .prepare("SELECT id, title, content, is_todo, is_completed, priority, pinned, group_id, created_at, updated_at, completed_at FROM notes")
+            .prepare("SELECT id, title, content, is_todo, is_completed, priority, pinned, group_id, created_at, updated_at, completed_at, deadline FROM notes")
             .map_err(|e| e.to_string())?;
 
         let notes_result: Vec<serde_json::Value> = stmt
             .query_map([], |row| {
                 let group_id: Option<String> = row.get(7)?;
                 let completed_at: Option<i64> = row.get(10)?;
+                let deadline: Option<i64> = row.get(11)?;
                 let mut note = serde_json::json!({
                     "id": row.get::<_, String>(0)?,
                     "title": row.get::<_, String>(1)?,
@@ -564,6 +570,9 @@ pub async fn push_notes(state: State<'_, AppState>) -> Result<String, String> {
 
                 if let Some(cat) = completed_at {
                     note["completedAt"] = serde_json::Value::Number(cat.into());
+                }
+                if let Some(value) = deadline {
+                    note["deadline"] = serde_json::Value::Number(value.into());
                 }
 
                 Ok(note)
@@ -732,8 +741,8 @@ pub async fn pull_notes(state: State<'_, AppState>) -> Result<String, String> {
 
                         if should_update {
                             match conn.execute(
-                                "INSERT OR REPLACE INTO notes (id, title, content, is_todo, is_completed, priority, pinned, group_id, created_at, updated_at, completed_at)
-                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                                "INSERT OR REPLACE INTO notes (id, title, content, is_todo, is_completed, priority, pinned, group_id, created_at, updated_at, completed_at, deadline)
+                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                                 params![
                                     remote_id,
                                     remote_note.get("title").and_then(|v| v.as_str()).unwrap_or(""),
@@ -746,6 +755,7 @@ pub async fn pull_notes(state: State<'_, AppState>) -> Result<String, String> {
                                     remote_note.get("createdAt").and_then(|v| v.as_i64()).unwrap_or(0),
                                     remote_updated,
                                     remote_note.get("completedAt").and_then(|v| v.as_i64()),
+                                    remote_note.get("deadline").and_then(|v| v.as_i64()),
                                 ],
                             ) {
                                 Ok(_) => {

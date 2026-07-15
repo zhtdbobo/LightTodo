@@ -6,7 +6,6 @@ interface NoteCardProps {
   note: Note;
   onClick: () => void;
   onDelete: (e: React.MouseEvent) => void;
-  onTogglePinned: (e: React.MouseEvent) => void;
   onToggleCompleted?: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
@@ -14,7 +13,6 @@ export function NoteCard({
   note,
   onClick,
   onDelete,
-  onTogglePinned,
   onToggleCompleted,
 }: NoteCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -56,16 +54,6 @@ export function NoteCard({
             {note.title || "无标题"}
           </h3>
         </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onTogglePinned(e);
-          }}
-          className="text-xl hover:scale-110 transition-transform"
-          title={note.pinned ? "取消置顶" : "置顶"}
-        >
-          {note.pinned ? "📌" : "📍"}
-        </button>
       </div>
 
       {/* 内容预览 */}

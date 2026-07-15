@@ -9,6 +9,7 @@ pub struct Note {
     pub is_completed: bool,
     pub color: Option<String>,
     pub pinned: bool,
+    pub deadline: Option<i64>,
     pub priority: i32,
     pub tags: Vec<String>,
     pub group_id: Option<String>,
@@ -27,6 +28,7 @@ pub struct CreateNoteInput {
     pub color: Option<String>,
     pub priority: Option<i32>,
     pub pinned: Option<bool>,
+    pub deadline: Option<i64>,
     pub group_id: Option<String>,
 }
 
@@ -39,6 +41,8 @@ pub struct UpdateNoteInput {
     pub is_completed: Option<bool>,
     pub color: Option<String>,
     pub pinned: Option<bool>,
+    pub deadline: Option<i64>,
+    pub clear_deadline: Option<bool>,
     pub priority: Option<i32>,
     pub tags: Option<Vec<String>>,
     pub group_id: Option<String>,

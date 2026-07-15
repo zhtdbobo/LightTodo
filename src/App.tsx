@@ -8,6 +8,7 @@ import { WebDAVSettings } from "./features/sync/WebDAVSettings";
 import { syncNotes } from "./features/sync/api";
 import { formatTimestamp, calculateDuration } from "./features/notes/utils/timeFormat";
 import { SimpleMarkdown } from "./features/notes/components/SimpleMarkdown";
+import { belongsToTodayGroup, fromDateTimeLocalValue, getDeadlineStatus, toDateTimeLocalValue } from "./features/notes/utils/deadline";
 
 // 仅在开发模式下导入 react-grab
 const initReactGrab = import.meta.env.DEV
@@ -78,6 +79,7 @@ function App() {
   const [showSyncMenu, setShowSyncMenu] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [currentTime, setCurrentTime] = useState(Date.now());
   const hasInitialized = useRef(false);
   const autoSyncInterval = useRef<number | null>(null);
   const grabApiRef = useRef<any>(null);
@@ -85,6 +87,11 @@ function App() {
   const resetConfirmRef = useRef<HTMLDivElement>(null);
 
   // 检查是否是设置页面
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   useEffect(() => {
     if (window.location.hash === "#settings") {
       setShowSettings(true);
@@ -294,7 +301,7 @@ function App() {
   // 创建新便签
   const handleCreateNote = async (
     forceCreate: boolean = false,
-    options: Partial<Pick<Note, "groupId" | "pinned">> = {}
+    options: Partial<Pick<Note, "groupId" | "deadline">> = {}
   ) => {
     console.log("Creating note...");
 
@@ -305,7 +312,7 @@ function App() {
           !n.title.trim() &&
           !n.isCompleted &&
           n.groupId === options.groupId &&
-          Boolean(n.pinned) === Boolean(options.pinned)
+          n.deadline === options.deadline
       );
       if (emptyNote) {
         focusNoteTextarea(emptyNote.id, 50);
@@ -321,7 +328,7 @@ function App() {
         tags: [],
         priority: 0,
         groupId: options.groupId,
-        pinned: options.pinned,
+        deadline: options.deadline,
       });
       console.log("Note created:", newNote);
       addNote(newNote);
@@ -345,18 +352,6 @@ function App() {
     }
   };
 
-  // 切换置顶状态
-  const handleTogglePinned = async (note: Note) => {
-    try {
-      const updated = await updateNote({
-        id: note.id,
-        pinned: !note.pinned,
-      });
-      updateNoteInStore(updated);
-    } catch (error) {
-      console.error("Failed to toggle pinned:", error);
-    }
-  };
   const handleCyclePriority = async (note: Note) => {
     try {
       // 循环: 0 -> 1 -> 2 -> 0
@@ -394,12 +389,12 @@ function App() {
     }
   };
 
-  // 分组：置顶、自定义分组、未分类、已完成
-  const pinnedNotes = notes
-    .filter((n) => n.pinned && !n.isCompleted)
-    .sort((a, b) => b.priority - a.priority);
+  // 带截止时间的未完成待办只展示在“今日”智能分组中。
+  const todayNotes = notes
+    .filter(belongsToTodayGroup)
+    .sort((a, b) => (a.deadline || 0) - (b.deadline || 0));
   const activeTodos = notes
-    .filter((n) => !n.pinned && !n.isCompleted && !n.groupId)
+    .filter((n) => n.deadline == null && !n.isCompleted && !n.groupId)
     .sort((a, b) => b.priority - a.priority);
   const completedTodos = notes.filter((n) => n.isCompleted);
 
@@ -407,7 +402,7 @@ function App() {
   const groupedNotes = groups.map((group) => ({
     group,
     notes: notes
-      .filter((n) => n.groupId === group.id && !n.pinned && !n.isCompleted)
+      .filter((n) => n.groupId === group.id && n.deadline == null && !n.isCompleted)
       .sort((a, b) => b.priority - a.priority),
   }));
 
@@ -527,6 +522,7 @@ function App() {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const [showMenu, setShowMenu] = useState(false);
     const [showGroupInput, setShowGroupInput] = useState(false);
+    const [deadlineValue, setDeadlineValue] = useState(toDateTimeLocalValue(note.deadline));
     const [newGroupName, setNewGroupName] = useState("");
     const [isExpanded, setIsExpanded] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
@@ -563,6 +559,10 @@ function App() {
       setLocalTitle(note.title);
     }, [note.title]);
 
+    useEffect(() => {
+      setDeadlineValue(toDateTimeLocalValue(note.deadline));
+    }, [note.deadline]);
+
     // 当内容变化时调整高度
     useEffect(() => {
       adjustHeight();
@@ -594,7 +594,6 @@ function App() {
         const updated = await updateNote({
           id: note.id,
           groupId: groupId ?? undefined,
-          pinned: false, // 移动到分组时取消置顶
         });
         updateNoteInStore(updated);
         setShowMenu(false);
@@ -602,6 +601,17 @@ function App() {
       } catch (error) {
         console.error("Failed to move to group:", error);
       }
+    };
+
+    const handleDeadlineChange = async (value: string) => {
+      const deadline = fromDateTimeLocalValue(value);
+      const updated = await updateNote({
+        id: note.id,
+        deadline,
+        clearDeadline: deadline == null,
+      });
+      updateNoteInStore(updated);
+      setDeadlineValue(value);
     };
 
     const handleCreateAndMoveToGroup = async () => {
@@ -665,7 +675,7 @@ function App() {
                 if (!currentContent) {
                   await handleCreateNote(true, {
                     groupId: note.groupId,
-                    pinned: note.pinned,
+                    deadline: note.deadline,
                   });
                   return;
                 }
@@ -678,7 +688,7 @@ function App() {
                 // 强制创建新待办
                 await handleCreateNote(true, {
                   groupId: note.groupId,
-                  pinned: note.pinned,
+                  deadline: note.deadline,
                 });
               }
             }}
@@ -728,6 +738,15 @@ function App() {
             </div>
           )}
 
+          {note.deadline != null && (() => {
+            const status = getDeadlineStatus(note.deadline, currentTime);
+            return (
+              <span className={`text-[10px] whitespace-nowrap mt-0.5 ${status.overdue ? "text-red-500" : "text-orange-500"}`}>
+                {status.label}
+              </span>
+            );
+          })()}
+
           {/* 三点菜单按钮 */}
           <div className="relative flex-shrink-0" ref={menuRef}>
             <button
@@ -765,15 +784,24 @@ function App() {
                   </>
                 ) : (
                   <>
-                    <button
-                      onClick={() => {
-                        handleTogglePinned(note);
-                        setShowMenu(false);
-                      }}
-                      className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700"
-                    >
-                      {note.pinned ? "取消置顶" : "置顶"}
-                    </button>
+                    <div className="px-3 py-1.5 border-b border-gray-100">
+                      <label className="block text-gray-500 mb-1">截止时间</label>
+                      <input
+                        aria-label="截止时间"
+                        type="datetime-local"
+                        value={deadlineValue}
+                        onChange={(event) => void handleDeadlineChange(event.target.value)}
+                        className="w-full border border-gray-200 rounded px-1 py-0.5 text-gray-700"
+                      />
+                      {note.deadline != null && (
+                        <button
+                          onClick={() => void handleDeadlineChange("")}
+                          className="mt-1 text-red-500 hover:text-red-600"
+                        >
+                          清除截止时间
+                        </button>
+                      )}
+                    </div>
 
                     {/* 移动到分组 */}
                     <div className="relative">
@@ -993,11 +1021,11 @@ function App() {
           </div>
         ) : (
           <>
-            {/* 置顶区域 */}
-            {pinnedNotes.length > 0 && (
+            {/* 今日智能分组 */}
+            {(
               <div className="mb-4">
                 <div className="text-xs text-gray-400 mb-2 flex items-center justify-between group">
-                  <span>置顶</span>
+                  <span>今日（{todayNotes.length}）</span>
                   <button
                     onClick={async () => {
                       const newNote = await createNote({
@@ -1006,21 +1034,25 @@ function App() {
                         isTodo: true,
                         tags: [],
                         priority: 0,
-                        pinned: true, // 新建时直接置顶
+                        deadline: Date.now() + 60 * 60 * 1000,
                       });
                       addNote(newNote);
                       focusNoteTextarea(newNote.id);
                     }}
                     className="opacity-0 group-hover:opacity-100 text-cyan-400 hover:text-cyan-500 text-sm transition-opacity"
-                    title="新建置顶待办"
+                    title="新建今日待办"
                   >
                     +
                   </button>
                 </div>
                 <div className="space-y-0.5 bg-cyan-50/20 rounded-lg p-2">
-                  {sortWithNewFirst(pinnedNotes).map((note) => (
-                    <TodoItem key={note.id} note={note} />
-                  ))}
+                  {todayNotes.length === 0 ? (
+                    <div className="text-xs text-gray-300 py-1">暂无设置截止时间的待办</div>
+                  ) : (
+                    sortWithNewFirst(todayNotes).map((note) => (
+                      <TodoItem key={note.id} note={note} />
+                    ))
+                  )}
                 </div>
               </div>
             )}

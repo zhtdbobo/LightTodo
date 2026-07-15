@@ -7,6 +7,7 @@ export interface Note {
   isCompleted: boolean;
   color?: string;
   pinned: boolean;
+  deadline?: number | null;
   priority: number;
   tags: string[];
   groupId?: string;
@@ -25,6 +26,7 @@ export interface CreateNoteInput {
   color?: string;
   priority?: number;
   pinned?: boolean;
+  deadline?: number | null;
   groupId?: string;
 }
 
@@ -37,6 +39,8 @@ export interface UpdateNoteInput {
   isCompleted?: boolean;
   color?: string;
   pinned?: boolean;
+  deadline?: number | null;
+  clearDeadline?: boolean;
   priority?: number;
   tags?: string[];
   groupId?: string;

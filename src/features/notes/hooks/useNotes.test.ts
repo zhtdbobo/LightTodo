@@ -193,6 +193,16 @@ describe('useNotes API', () => {
       })
       expect(result.title).toBe('Updated Title')
     })
+
+    it('应该序列化 deadline 并支持显式清除', async () => {
+      ;(invoke as any).mockResolvedValue({ id: '1', deadline: null })
+
+      await updateNote({ id: '1', clearDeadline: true })
+
+      expect(invoke).toHaveBeenCalledWith('update_note', {
+        input: { id: '1', clear_deadline: true },
+      })
+    })
   })
 
   describe('deleteNote', () => {

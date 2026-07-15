@@ -64,10 +64,6 @@ export function NotesList() {
     return true;
   });
 
-  // 分组便签：置顶和普通
-  const pinnedNotes = filteredNotes.filter((n) => n.pinned);
-  const regularNotes = filteredNotes.filter((n) => !n.pinned);
-
   // 创建新便签
   const handleCreateNote = async () => {
     setIsCreating(true);
@@ -84,20 +80,6 @@ export function NotesList() {
       console.error("Failed to create note:", error);
     } finally {
       setIsCreating(false);
-    }
-  };
-
-  // 切换置顶
-  const handleTogglePinned = async (note: Note, e: React.MouseEvent) => {
-    e.stopPropagation();
-    try {
-      const updated = await updateNote({
-        id: note.id,
-        pinned: !note.pinned,
-      });
-      updateNoteInStore(updated);
-    } catch (error) {
-      console.error("Failed to toggle pinned:", error);
     }
   };
 
@@ -135,35 +117,12 @@ export function NotesList() {
 
   return (
     <div className="p-6">
-      {/* 置顶便签 */}
-      {pinnedNotes.length > 0 && (
-        <div className="mb-6">
-          <h2 className="text-lg font-semibold mb-3 text-gray-700">
-            📌 置顶便签
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {pinnedNotes.map((note) => (
-              <NoteCard
-                key={note.id}
-                note={note}
-                onClick={() => handleNoteClick(note)}
-                onDelete={(e) => handleDelete(note, e)}
-                onTogglePinned={(e) => handleTogglePinned(note, e)}
-                onToggleCompleted={
-                  note.isTodo ? (e) => handleToggleCompleted(note, e) : undefined
-                }
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* 所有便签 */}
       <div className="mb-6">
         <h2 className="text-lg font-semibold mb-3 text-gray-700">
           📝 所有便签
         </h2>
-        {regularNotes.length === 0 ? (
+        {filteredNotes.length === 0 ? (
           <p className="text-gray-500 text-center py-8">
             {searchQuery || filterTags.length > 0
               ? "没有找到匹配的便签"
@@ -171,13 +130,12 @@ export function NotesList() {
           </p>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {regularNotes.map((note) => (
+            {filteredNotes.map((note) => (
               <NoteCard
                 key={note.id}
                 note={note}
                 onClick={() => handleNoteClick(note)}
                 onDelete={(e) => handleDelete(note, e)}
-                onTogglePinned={(e) => handleTogglePinned(note, e)}
                 onToggleCompleted={
                   note.isTodo ? (e) => handleToggleCompleted(note, e) : undefined
                 }

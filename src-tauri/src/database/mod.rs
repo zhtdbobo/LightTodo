@@ -220,6 +220,17 @@ impl Database {
             [],
         );
 
+        // 截止时间使用 Unix 毫秒时间戳；NULL 表示未设置。
+        let _ = conn.execute(
+            "ALTER TABLE notes ADD COLUMN deadline INTEGER",
+            [],
+        );
+
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notes_deadline ON notes(deadline)",
+            [],
+        );
+
         // 创建 completed_at 索引
         let _ = conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_notes_completed_at ON notes(completed_at)",
