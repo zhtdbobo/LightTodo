@@ -74,6 +74,41 @@ const groupTitleFont = {
   fontFamily: '"Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif',
 };
 
+const PASSWORD_CHARSETS = {
+  upper: "ABCDEFGHJKLMNPQRSTUVWXYZ",
+  lower: "abcdefghijkmnpqrstuvwxyz",
+  number: "23456789",
+  symbol: "!@#$%&*",
+} as const;
+
+type PasswordCharType = keyof typeof PASSWORD_CHARSETS;
+
+const generatePassword = (length: number, charTypes: PasswordCharType[]) => {
+  const charset = charTypes.map((type) => PASSWORD_CHARSETS[type]).join("");
+  const safeCharset = charset || `${PASSWORD_CHARSETS.upper}${PASSWORD_CHARSETS.lower}${PASSWORD_CHARSETS.number}`;
+  const values = new Uint32Array(length);
+  crypto.getRandomValues(values);
+  return Array.from(values, (value) => safeCharset[value % safeCharset.length]).join("");
+};
+
+/** 密码条目：title 为代码块，第一行备注、第二行密码 */
+const PASSWORD_NOTE_MARKER = "password";
+
+const buildPasswordTitleMarkdown = (remark: string, password: string) =>
+  `\`\`\`\n${remark}\n${password}\n\`\`\``;
+
+const parsePasswordTitleMarkdown = (title: string) => {
+  const fenced = title.match(/^```(?:\w*)?\n?([\s\S]*?)\n?```\s*$/);
+  const body = (fenced ? fenced[1] : title).replace(/\r\n/g, "\n");
+  const lines = body.split("\n");
+  const remark = lines[0] ?? "";
+  const password = lines.slice(1).join("\n");
+  return { remark, password };
+};
+
+const isPasswordNote = (note: Pick<Note, "content">) =>
+  note.content === PASSWORD_NOTE_MARKER;
+
 function App() {
   const { notes, setNotes, addNote, updateNoteInStore, removeNote } = useNotesStore();
   const [groups, setGroups] = useState<Group[]>([]);
@@ -83,12 +118,20 @@ function App() {
   const [showSyncMenu, setShowSyncMenu] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [passwordLength, setPasswordLength] = useState(16);
+  const [passwordCharTypes, setPasswordCharTypes] = useState<PasswordCharType[]>([
+    "upper",
+    "lower",
+    "number",
+  ]);
+  const [showPasswordMenu, setShowPasswordMenu] = useState(false);
   const [currentTime, setCurrentTime] = useState(Date.now());
   const hasInitialized = useRef(false);
   const autoSyncInterval = useRef<number | null>(null);
   const grabApiRef = useRef<any>(null);
   const syncMenuRef = useRef<HTMLDivElement>(null);
   const resetConfirmRef = useRef<HTMLDivElement>(null);
+  const passwordMenuRef = useRef<HTMLDivElement>(null);
 
   // 检查是否是设置页面
   useEffect(() => {
@@ -130,13 +173,16 @@ function App() {
       if (resetConfirmRef.current && !resetConfirmRef.current.contains(event.target as Node)) {
         setShowResetConfirm(false);
       }
+      if (passwordMenuRef.current && !passwordMenuRef.current.contains(event.target as Node)) {
+        setShowPasswordMenu(false);
+      }
     };
 
-    if (showSyncMenu || showResetConfirm) {
+    if (showSyncMenu || showResetConfirm || showPasswordMenu) {
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
-  }, [showSyncMenu, showResetConfirm]);
+  }, [showSyncMenu, showResetConfirm, showPasswordMenu]);
 
   // 加载便签
   useEffect(() => {
@@ -398,9 +444,22 @@ function App() {
     .filter(belongsToTodayGroup)
     .sort((a, b) => (a.deadline || 0) - (b.deadline || 0));
   const activeTodos = notes
-    .filter((n) => n.deadline == null && !n.isCompleted && !n.groupId)
+    .filter(
+      (n) =>
+        n.deadline == null &&
+        !n.isCompleted &&
+        !n.groupId &&
+        !isPasswordNote(n)
+    )
     .sort((a, b) => b.priority - a.priority);
   const completedTodos = notes.filter((n) => n.isCompleted);
+  const passwordGroupNotes = notes.filter(
+    (note) =>
+      note.deadline == null &&
+      !note.isCompleted &&
+      !note.groupId &&
+      isPasswordNote(note)
+  );
 
   // 按分组分类待办
   const groupedNotes = groups.map((group) => ({
@@ -524,7 +583,14 @@ function App() {
 
   // TodoItem 组件（需要使用 useRef 所以提取为组件）
   const TodoItem = ({ note }: { note: Note }) => {
-    const [localTitle, setLocalTitle] = useState(note.title);
+    const isPwd = isPasswordNote(note);
+    const parsedPwd = isPwd ? parsePasswordTitleMarkdown(note.title) : null;
+    const [localTitle, setLocalTitle] = useState(
+      isPwd ? (parsedPwd?.remark ?? "") : note.title
+    );
+    const [localPassword, setLocalPassword] = useState(
+      isPwd ? (parsedPwd?.password ?? "") : ""
+    );
     const composingRef = useRef(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const [showMenu, setShowMenu] = useState(false);
@@ -570,8 +636,15 @@ function App() {
 
     // 同步外部变化到本地状态
     useEffect(() => {
-      setLocalTitle(note.title);
-    }, [note.title]);
+      if (isPasswordNote(note)) {
+        const parsed = parsePasswordTitleMarkdown(note.title);
+        setLocalTitle(parsed.remark);
+        setLocalPassword(parsed.password);
+      } else {
+        setLocalTitle(note.title);
+        setLocalPassword("");
+      }
+    }, [note.title, note.content]);
 
     useEffect(() => {
       const nextDeadlineValue = toDateTimeLocalValue(note.deadline);
@@ -582,7 +655,7 @@ function App() {
     // 当内容变化时调整高度
     useEffect(() => {
       adjustHeight();
-    }, [localTitle, note.title]);
+    }, [localTitle, localPassword, note.title, isEditing]);
 
     useEffect(() => {
       if (isEditing) {
@@ -602,7 +675,27 @@ function App() {
       setShowMenu((current) => !current);
     };
 
+    const handlePasswordEditorChange = (value: string) => {
+      // 编辑态下 textarea 内是「代码块展开内容」：第 1 行备注，第 2 行起密码
+      const normalized = value.replace(/\r\n/g, "\n");
+      const lines = normalized.split("\n");
+      setLocalTitle(lines[0] ?? "");
+      setLocalPassword(lines.slice(1).join("\n"));
+    };
+
     const handleLocalBlur = async () => {
+      if (isPasswordNote(note)) {
+        const nextTitle = buildPasswordTitleMarkdown(localTitle, localPassword);
+        if (nextTitle !== note.title) {
+          await handleEditTitle(note, nextTitle);
+        }
+        if (!localTitle.trim() && !localPassword.trim()) {
+          await handleDelete(note);
+        }
+        setIsEditing(false);
+        return;
+      }
+
       // 失焦时才保存到数据库
       if (localTitle.trim() !== note.title) {
         await handleEditTitle(note, localTitle);
@@ -748,15 +841,71 @@ function App() {
             onChange={() => handleToggleCompleted(note)}
             className="mt-0.5 w-4 h-4 cursor-pointer flex-shrink-0 accent-cyan-400"
           />
-          <button
-            onClick={() => handleCyclePriority(note)}
-            className="text-xs transition flex-shrink-0 mt-0.5"
-            title="切换优先级"
-          >
-            {getPriorityEmoji(note.priority) || "⚪"}
-          </button>
+          {isPwd ? null : (
+            <button
+              onClick={() => handleCyclePriority(note)}
+              className="text-xs transition flex-shrink-0 mt-0.5"
+              title="切换优先级"
+            >
+              {getPriorityEmoji(note.priority) || "⚪"}
+            </button>
+          )}
           <div className="flex-1 min-w-0 space-y-0.5">
-          {isEditing || !localTitle.trim() ? (
+          {isPwd ? (
+            isEditing ? (
+              <div className="password-code-editor w-full min-w-0">
+                <textarea
+                  ref={textareaRef}
+                  data-note-id={note.id}
+                  value={`${localTitle}\n${localPassword}`}
+                  onChange={(e) => {
+                    handlePasswordEditorChange(e.target.value);
+                    adjustHeight();
+                  }}
+                  onBlur={handleLocalBlur}
+                  onFocus={() => setIsEditing(true)}
+                  onCompositionStart={() => {
+                    composingRef.current = true;
+                  }}
+                  onCompositionEnd={(e) => {
+                    composingRef.current = false;
+                    handlePasswordEditorChange((e.target as HTMLTextAreaElement).value);
+                  }}
+                  onKeyDown={(e) => {
+                    // Enter 在代码块内换行；Ctrl/Cmd+Enter 结束编辑
+                    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !composingRef.current) {
+                      e.preventDefault();
+                      void handleLocalBlur();
+                    }
+                  }}
+                  className="w-full bg-transparent border-none outline-none text-sm resize-none overflow-hidden text-gray-700 font-mono leading-snug"
+                  placeholder={"备注\n密码"}
+                  autoComplete="off"
+                  spellCheck="false"
+                  rows={2}
+                  style={{ minHeight: "40px" }}
+                />
+              </div>
+            ) : (
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => setIsEditing(true)}
+                onDoubleClick={() => setIsEditing(true)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === "F2") {
+                    event.preventDefault();
+                    setIsEditing(true);
+                  }
+                }}
+                className={`simple-markdown-preview w-full min-w-0 cursor-text rounded-sm text-sm leading-snug outline-none focus:ring-1 focus:ring-cyan-200 ${
+                  note.isCompleted ? "line-through text-gray-300 cursor-pointer" : "text-gray-700"
+                }`}
+              >
+                <SimpleMarkdown text={buildPasswordTitleMarkdown(localTitle, localPassword)} />
+              </div>
+            )
+          ) : isEditing || !localTitle.trim() ? (
           <textarea
             ref={textareaRef}
             data-note-id={note.id}
@@ -859,19 +1008,21 @@ function App() {
           })()}
           </div>
 
-          {/* 三点菜单按钮 */}
+          {/* 右侧操作 */}
           <div className="relative flex-shrink-0" ref={menuRef}>
             <button
               ref={menuButtonRef}
-              onClick={toggleMenu}
-              className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600 text-sm transition"
-              title="更多操作"
+              onClick={isPwd ? () => { void handleDelete(note); } : toggleMenu}
+              className={`opacity-0 group-hover:opacity-100 text-sm transition ${
+                isPwd ? "text-red-400 hover:text-red-500" : "text-gray-400 hover:text-gray-600"
+              }`}
+              title={isPwd ? "删除" : "更多操作"}
             >
-              ⋯
+              {isPwd ? "✕" : "⋯"}
             </button>
 
             {/* 下拉菜单 */}
-            {showMenu && (
+            {!isPwd && showMenu && (
               <div className={`absolute right-0 ${openMenuUpward ? "bottom-6" : "top-6"} bg-white border border-gray-200 rounded-md shadow-lg py-0.5 z-50 w-60 max-w-[calc(100vw-2rem)] max-h-[min(420px,calc(100vh-80px))] overflow-y-auto text-xs`}>
                 {note.isCompleted ? (
                   <>
@@ -1349,6 +1500,100 @@ function App() {
                 </div>
               </div>
             )}
+
+            <div className="mb-4">
+              <div className="mb-2 -ml-2 flex items-center justify-between group rounded py-0.5 transition-colors">
+                <div className="flex items-center gap-1.5 min-w-0 flex-1 text-[13px] text-gray-600" style={groupTitleFont}>
+                  <span>密码</span>
+                </div>
+                <div className="relative flex items-center gap-2" ref={passwordMenuRef}>
+                  <button
+                    onClick={() => setShowPasswordMenu((current) => !current)}
+                    className="opacity-0 group-hover:opacity-100 text-cyan-400 hover:text-cyan-500 text-sm transition-opacity"
+                    title="生成密码"
+                  >
+                    +
+                  </button>
+                  {showPasswordMenu && (
+                    <div className="absolute right-0 top-6 z-50 w-64 rounded-md border border-gray-200 bg-white p-3 shadow-lg text-xs space-y-3">
+                      <div>
+                        <div className="mb-2 text-gray-500">字符类型</div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {([
+                            ["upper", "大写字母"],
+                            ["lower", "小写字母"],
+                            ["number", "数字"],
+                            ["symbol", "特殊字符"],
+                          ] as const).map(([key, label]) => (
+                            <label key={key} className="flex items-center gap-2 text-gray-700 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={passwordCharTypes.includes(key)}
+                                onChange={(e) => {
+                                  setPasswordCharTypes((current) =>
+                                    e.target.checked
+                                      ? Array.from(new Set([...current, key]))
+                                      : current.filter((item) => item !== key)
+                                  );
+                                }}
+                              />
+                              <span>{label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="mb-2 text-gray-500">长度</div>
+                        <input
+                          type="range"
+                          min={8}
+                          max={32}
+                          value={passwordLength}
+                          onChange={(e) => setPasswordLength(Number(e.target.value))}
+                          className="w-full"
+                        />
+                        <div className="mt-1 text-gray-600">{passwordLength} 位</div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          const password = generatePassword(passwordLength, passwordCharTypes);
+                          const newNote = await createNote({
+                            title: buildPasswordTitleMarkdown("", password),
+                            content: PASSWORD_NOTE_MARKER,
+                            isTodo: true,
+                            tags: [],
+                            priority: 0,
+                          });
+                          addNote(newNote);
+                          setShowPasswordMenu(false);
+                          setTimeout(() => {
+                            const textarea = document.querySelector(
+                              `textarea[data-note-id="${newNote.id}"]`
+                            ) as HTMLTextAreaElement | null;
+                            textarea?.focus();
+                            textarea?.setSelectionRange(0, 0);
+                          }, 0);
+                        }}
+                        className="w-full rounded bg-cyan-400 px-3 py-2 text-white hover:bg-cyan-500"
+                      >
+                        生成密码
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="space-y-0.5">
+                {passwordGroupNotes.length > 0 ? (
+                  sortWithNewFirst(passwordGroupNotes).map((note) => (
+                    <TodoItem key={note.id} note={note} />
+                  ))
+                ) : (
+                  <div className="text-xs text-gray-300 py-1">
+                    点击加号生成密码：第一行写备注，第二行为密码（同一代码块）。
+                  </div>
+                )}
+              </div>
+            </div>
 
             {/* 已完成 */}
             {completedTodos.length > 0 && (
