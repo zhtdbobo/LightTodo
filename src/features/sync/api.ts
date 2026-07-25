@@ -4,6 +4,8 @@ export interface WebDAVConfig {
   url: string;
   username: string;
   password: string;
+  has_password?: boolean;
+  clear_password?: boolean;
   enabled: boolean;
   auto_sync: boolean;
   directory: string;
@@ -44,4 +46,8 @@ export async function pullNotes(): Promise<string> {
 
 export async function resetSyncState(): Promise<void> {
   return await invoke<void>("reset_sync_state");
+}
+
+export async function cancelSync(): Promise<void> {
+  return await invoke<void>("cancel_sync");
 }

@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Note, CreateNoteInput, UpdateNoteInput, Tag } from "../types";
 
+const noteUpdateQueues = new Map<string, Promise<unknown>>();
+
 // 转换 camelCase 到 snake_case
 export function toSnakeCase(obj: any): any {
   if (Array.isArray(obj)) {
@@ -49,13 +51,39 @@ export async function createNote(input: CreateNoteInput): Promise<Note> {
 
 // 更新便签
 export async function updateNote(input: UpdateNoteInput): Promise<Note> {
-  const result = await invoke("update_note", { input: toSnakeCase(input) });
-  return toCamelCase(result);
+  const previous = noteUpdateQueues.get(input.id) ?? Promise.resolve();
+  const request = previous
+    .catch(() => undefined)
+    .then(async () => {
+      const result = await invoke("update_note", { input: toSnakeCase(input) });
+      return toCamelCase(result) as Note;
+    });
+  noteUpdateQueues.set(input.id, request);
+  try {
+    return await request;
+  } finally {
+    if (noteUpdateQueues.get(input.id) === request) {
+      noteUpdateQueues.delete(input.id);
+    }
+  }
 }
 
 // 删除便签
 export async function deleteNote(id: string): Promise<void> {
-  await invoke("delete_note", { id });
+  const previous = noteUpdateQueues.get(id) ?? Promise.resolve();
+  const request = previous
+    .catch(() => undefined)
+    .then(async () => {
+      await invoke("delete_note", { id });
+    });
+  noteUpdateQueues.set(id, request);
+  try {
+    await request;
+  } finally {
+    if (noteUpdateQueues.get(id) === request) {
+      noteUpdateQueues.delete(id);
+    }
+  }
 }
 
 // 搜索便签

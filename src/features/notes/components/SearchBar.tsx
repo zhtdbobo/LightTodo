@@ -1,27 +1,36 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNotesStore } from "../stores/notesStore";
-import { searchNotes } from "../hooks/useNotes";
+import { getAllNotes, searchNotes } from "../hooks/useNotes";
 
 export function SearchBar() {
   const { setNotes, setSearchQuery, searchQuery } = useNotesStore();
   const [isSearching, setIsSearching] = useState(false);
+  const requestRef = useRef(0);
 
   const handleSearch = async (query: string) => {
+    const requestId = ++requestRef.current;
     setSearchQuery(query);
 
     if (!query.trim()) {
       // 清空搜索时重新加载所有便签
+      setIsSearching(false);
+      try {
+        const results = await getAllNotes();
+        if (requestId === requestRef.current) setNotes(results);
+      } catch (error) {
+        console.error("Failed to reload notes:", error);
+      }
       return;
     }
 
     setIsSearching(true);
     try {
       const results = await searchNotes(query);
-      setNotes(results);
+      if (requestId === requestRef.current) setNotes(results);
     } catch (error) {
       console.error("Search failed:", error);
     } finally {
-      setIsSearching(false);
+      if (requestId === requestRef.current) setIsSearching(false);
     }
   };
 

@@ -31,7 +31,7 @@ const renderInlineNodes = (nodes: InlineNode[], keyPrefix: string): ReactNode =>
           <a
             key={key}
             href={node.href}
-            rel="noreferrer"
+            rel="noopener noreferrer"
             target="_blank"
             onClick={(event) => event.stopPropagation()}
           >

@@ -17,7 +17,7 @@
 - ⏰ **自动同步** - 启动时自动同步，支持定时后台同步（每 5 分钟）
 - 🎨 **简洁设计** - 极简界面，专注于待办本身
 - 💾 **自动保存** - 编辑后自动保存，无需手动操作
-- 📱 **跨平台** - 支持 Windows、macOS、Linux
+- 📱 **跨平台核心** - SQLite 与普通待办功能支持 Windows、macOS、Linux；WebDAV 凭据和密码待办加密目前使用 Windows Credential Manager
 - 🔒 **本地优先** - 数据本地 SQLite 存储，隐私安全
 
 ## 🚀 快速开始
@@ -165,14 +165,15 @@ pnpm run test:e2e:debug
 ### 待办分组
 
 - **今日** - 自动显示所有已设置 deadline 的未完成待办
-- **自定义分组** - 创建自己的分组（双击分组名可重命名，悬停显示删除按钮）
-- **未完成** - 未分组的待办，按优先级排序
+- **自定义分组** - 创建自己的分组；未完成分组默认折叠，并在名称后显示条目数
+- **未分类** - 未分组的待办，按优先级排序，也支持折叠查看
 - **✓ 已完成** - 已完成的待办
 
 #### 分组操作
 - **创建分组**：在待办的右键菜单中选择"移动到" → 输入新分组名 → 创建
 - **重命名分组**：双击分组名称进行编辑
-- **删除分组**：鼠标悬停在分组名称上，点击右侧的 **✕** 按钮（分组内的待办会移至"未完成"）
+- **删除分组**：鼠标悬停在分组名称上，点击右侧的 **✕** 按钮（分组内的待办会移至"未分类"）
+- **调整顺序**：鼠标悬停在分组名称上，点击 **↑/↓** 将分组移动到上方或下方；顺序会保存并参与同步
 - **移动待办**：点击待办右侧的 **⋯** 按钮 → "移动到" → 选择目标分组
 
 ### WebDAV 同步
@@ -197,41 +198,50 @@ pnpm run test:e2e:debug
 #### 同步模式
 
 - **⬇️ 下载**：从云端下载到本地
-  - 只下载云端比本地新的待办（通过 `updated_at` 时间戳对比）
-  - 本地不存在的待办也会下载
+  - 先读取一次云端 `manifest.json`
+  - 只下载云端有变化或本地不存在的待办与分组
   - 如果本地和云端完全一致，显示"无需下载，本地已是最新"
   
 - **⬆️ 上传**：从本地上传到云端
-  - 只上传 `updated_at > last_sync` 的待办（本地修改过的）
+  - 只上传更新时间或文件哈希发生变化的待办与分组
   - 首次同步会上传所有本地待办
-  - 自动删除云端多余的文件（本地已删除的待办）
+  - 通过删除墓碑把本地删除动作同步到云端
   
 - **🔄 同步**：智能双向同步（推荐）
-  - **上传**：本地修改过的待办（`updated_at >= last_sync`）
-  - **下载**：云端有但本地不存在的待办
-  - **更新**：云端版本比本地新的待办（`remote_updated > local_updated`）
-  - **删除**：自动删除云端本地已删除的待办
-  - 以最新修改时间为准，智能合并数据
+  - 先用 `manifest.json` 对比 ID、更新时间、删除时间和 SHA-256 哈希
+  - 仅上传或下载实际变化的待办与分组
+  - 删除动作会在设备间双向传播
+  - 时间戳相同时使用文件哈希确定固定版本，避免设备间反复覆盖
 
 - **🔧 重置**：重置同步状态
   - 将 `last_sync` 重置为 0
   - 自动关闭自动同步
-  - 下次同步会重新上传所有待办
-  - 适用于同步出错时的修复
+  - 不删除本地或云端数据，也不会绕过 manifest 的冲突保护
+  - 适用于清除同步时间记录后重新手动检查
 
 #### 同步逻辑说明
 
-**双向同步的四个计数含义**：
+本地数据继续保存在 SQLite；云端以逐条 JSON 文件保存内容，并使用 `manifest.json` 作为轻量同步索引。正常无变化同步只需要一次 manifest 下载，不再逐个请求所有待办文件。
+
+同步目录结构固定为：
+
+- `<同步目录>/manifest.json`：只保存待办/分组的 ID、更新时间、删除时间、SHA-256 哈希、对象 ETag，以及用于跨设备解锁密码待办的 vault envelope；不保存 WebDAV 密码或明文密码。
+- `<同步目录>/notes/<ID>.json`：单条待办内容。
+- `<同步目录>/groups/<ID>.json`：单个分组内容。
+
+WebDAV 密码不会回填到 WebView，Windows 版本保存在 Windows Credential Manager；密码待办标题使用 AES-256-GCM 加密，vault key 通过 manifest 中的 envelope 在设备间共享。
+
+**同步结果计数含义**：
 - **上传 (uploaded)**：本地修改后上传到云端的待办数量
 - **下载 (downloaded)**：云端有但本地不存在的新待办
 - **更新 (updated)**：云端版本比本地新，覆盖本地的待办数量
-- **删除 (deleted)**：云端被删除的待办数量
+- **删除云端/本地 (deleted)**：删除墓碑传播后实际删除的数量
 
-示例消息：`同步完成 (上传 1, 下载 1, 更新 1, 删除 0)`
+示例消息：`同步完成 - 上传 1 个待办，更新 1 个分组`
 
 #### 删除同步
 - 当你在本地删除待办后，使用"上传到云端"或"双向同步"，云端对应的文件也会被自动删除
-- 这确保了本地和云端数据的完全一致性
+- 删除时间会保存在 manifest 中，其他设备同步时也会删除对应的本地待办
 
 #### 同步按钮位置
 - **主界面底部**：快速同步三个按钮
@@ -257,13 +267,13 @@ pnpm run test:e2e:debug
 - 内存占用更低（使用系统 WebView2，无需打包浏览器）
 - 原生性能更好（Rust 后端）
 - 无需 Visual Studio（只需 Rust 工具链）
-- 支持 Windows / macOS / Linux 跨平台打包
+- 支持 Windows / macOS / Linux 跨平台打包；非 Windows 平台需要另行提供系统凭据存储实现后，才能启用 WebDAV 和密码待办
 
 ## 📁 数据存储
 
 ### 本地存储位置
 
-- **Windows**: `%LOCALAPPDATA%\lighttodo\notes.db`
+- **Windows**: `%APPDATA%\lighttodo\notes.db`
 - **macOS**: `~/Library/Application Support/lighttodo/notes.db`
 - **Linux**: `~/.local/share/lighttodo/notes.db`
 
@@ -289,9 +299,11 @@ CREATE TABLE notes (
 -- 分组表
 CREATE TABLE groups (
   id TEXT PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
-  display_order INTEGER NOT NULL,
-  created_at INTEGER NOT NULL
+  name TEXT NOT NULL,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT 0,
+  deleted_at INTEGER
 );
 
 -- 标签表（预留功能）
@@ -306,7 +318,7 @@ CREATE TABLE webdav_config (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   url TEXT NOT NULL,
   username TEXT NOT NULL,
-  password TEXT NOT NULL,
+  password TEXT NOT NULL,              -- 兼容旧版本，迁移后保持为空；真实密码在系统凭据存储中
   enabled INTEGER NOT NULL DEFAULT 0,
   auto_sync INTEGER NOT NULL DEFAULT 0,
   directory TEXT NOT NULL DEFAULT 'LightTodo',
@@ -325,8 +337,8 @@ CREATE TABLE webdav_config (
   "isCompleted": false,
   "priority": 2,
   "pinned": false,
-  "createdAt": "2026-06-29T10:00:00Z",
-  "updatedAt": "2026-06-29T12:00:00Z"
+  "createdAt": 1780000000000,
+  "updatedAt": 1780000000000
 }
 ```
 

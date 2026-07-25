@@ -2,6 +2,25 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)规范。
 
+## [0.2.4] - 2026-07-25
+
+### 主要功能
+
+- 增量同步：使用 `manifest.json`、SHA-256 与 ETag 减少请求并防止并发覆盖
+- 凭据安全：WebDAV 密码迁移到 Windows Credential Manager，不再回填到 WebView
+- 密码待办：使用 AES-256-GCM 加密，并通过 vault envelope 支持跨设备同步
+- 数据一致性：增加 SQLite 外键、WAL、事务化分组排序、删除墓碑及远程数据校验
+- 编辑体验：修复旧异步请求覆盖输入、空白待办重复创建、分组闪烁和光标位置问题
+- 应用加固：收紧 Tauri 权限和 CSP，增加同步超时、重试、取消、响应大小与路径限制
+
+### 发布说明
+
+- `v0.2.4` 为 LightTodo 的同步可靠性与数据安全版本
+- 本版本在 `v0.2.3` 基础上重构 WebDAV 增量同步，并完善密码待办的本地与跨设备加密
+- WebDAV 凭据与密码待办安全存储目前仅支持 Windows
+
+---
+
 ## [0.2.2] - 2026-07-15
 
 ### 主要功能
@@ -70,4 +89,6 @@
 ---
 
 [0.2.2]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.2
+[0.2.3]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.3
+[0.2.4]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.4
 [0.1.0]: https://github.com/jaridli/LightTodo/releases/tag/v0.1.0

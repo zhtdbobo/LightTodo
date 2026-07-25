@@ -14,6 +14,11 @@ export type MarkdownBlock =
   | { type: "orderedList"; items: InlineNode[][] }
   | { type: "codeBlock"; text: string };
 
+// User/remote content is rendered directly in the webview.  Cap recursive
+// formatting and quote nesting so adversarial input cannot exhaust the JS
+// call stack while parsing a note.
+const MAX_MARKDOWN_DEPTH = 32;
+
 const findClosing = (text: string, marker: string, from: number) => {
   const end = text.indexOf(marker, from);
   return end > from ? end : -1;
@@ -28,6 +33,13 @@ export const isSafeMarkdownUrl = (href: string) => {
 
   if (/^(https?:|mailto:)/i.test(trimmed)) {
     return true;
+  }
+
+  // Do not allow protocol-relative links or backslashes to escape the
+  // app's origin. They are not script URLs, but can unexpectedly navigate to
+  // an attacker-controlled host from a note.
+  if (trimmed.startsWith("//") || trimmed.includes("\\")) {
+    return false;
   }
 
   return /^[/.#][^\s]*$/.test(trimmed);
@@ -47,7 +59,10 @@ const pushText = (nodes: InlineNode[], text: string) => {
   nodes.push({ type: "text", text });
 };
 
-export const parseInlineMarkdown = (text: string): InlineNode[] => {
+export const parseInlineMarkdown = (text: string, depth = 0): InlineNode[] => {
+  if (depth >= MAX_MARKDOWN_DEPTH) {
+    return text ? [{ type: "text", text }] : [];
+  }
   const nodes: InlineNode[] = [];
   let index = 0;
 
@@ -59,7 +74,7 @@ export const parseInlineMarkdown = (text: string): InlineNode[] => {
       if (end !== -1) {
         nodes.push({
           type: "strong",
-          children: parseInlineMarkdown(text.slice(index + 2, end)),
+          children: parseInlineMarkdown(text.slice(index + 2, end), depth + 1),
         });
         index = end + 2;
         continue;
@@ -71,7 +86,7 @@ export const parseInlineMarkdown = (text: string): InlineNode[] => {
       if (end !== -1) {
         nodes.push({
           type: "strike",
-          children: parseInlineMarkdown(text.slice(index + 2, end)),
+          children: parseInlineMarkdown(text.slice(index + 2, end), depth + 1),
         });
         index = end + 2;
         continue;
@@ -97,7 +112,7 @@ export const parseInlineMarkdown = (text: string): InlineNode[] => {
             nodes.push({
               type: "link",
               href,
-              children: parseInlineMarkdown(text.slice(index + 1, labelEnd)),
+          children: parseInlineMarkdown(text.slice(index + 1, labelEnd), depth + 1),
             });
             index = hrefEnd + 1;
             continue;
@@ -111,7 +126,7 @@ export const parseInlineMarkdown = (text: string): InlineNode[] => {
       if (end !== -1) {
         nodes.push({
           type: "em",
-          children: parseInlineMarkdown(text.slice(index + 1, end)),
+          children: parseInlineMarkdown(text.slice(index + 1, end), depth + 1),
         });
         index = end + 1;
         continue;
@@ -132,7 +147,7 @@ const isBlockStart = (line: string) =>
   /^\s*[-*+]\s+/.test(line) ||
   /^\s*\d+[.)]\s+/.test(line);
 
-export const parseSimpleMarkdown = (source: string): MarkdownBlock[] => {
+export const parseSimpleMarkdown = (source: string, depth = 0): MarkdownBlock[] => {
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const blocks: MarkdownBlock[] = [];
   let index = 0;
@@ -176,7 +191,12 @@ export const parseSimpleMarkdown = (source: string): MarkdownBlock[] => {
         quoteLines.push(lines[index].replace(/^\s*>\s?/, ""));
         index += 1;
       }
-      blocks.push({ type: "quote", children: parseSimpleMarkdown(quoteLines.join("\n")) });
+      blocks.push({
+        type: "quote",
+        children: depth >= MAX_MARKDOWN_DEPTH
+          ? [{ type: "paragraph", children: parseInlineMarkdown(quoteLines.join("\n")) }]
+          : parseSimpleMarkdown(quoteLines.join("\n"), depth + 1),
+      });
       continue;
     }
 

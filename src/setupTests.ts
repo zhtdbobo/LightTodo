@@ -12,18 +12,6 @@ vi.mock('@tauri-apps/api', () => ({
   invoke: vi.fn(),
 }))
 
-vi.mock('@tauri-apps/plugin-shell', () => ({
-  open: vi.fn(),
-}))
-
-vi.mock('@tauri-apps/plugin-window', () => ({
-  getCurrent: vi.fn(() => ({
-    close: vi.fn(),
-    minimize: vi.fn(),
-    hide: vi.fn(),
-  })),
-}))
-
 // Mock localStorage
 const localStorageMock = {
   getItem: vi.fn(),

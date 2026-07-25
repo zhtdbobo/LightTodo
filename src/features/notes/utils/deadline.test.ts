@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { belongsToTodayGroup, fromDateTimeLocalValue, getDeadlineStatus } from "./deadline";
+import {
+  belongsToTodayGroup,
+  fromDateTimeLocalValue,
+  getDeadlineStatus,
+  toDateTimeLocalValue,
+} from "./deadline";
 
 describe("deadline utilities", () => {
   const now = new Date(2026, 6, 15, 12, 30).getTime();
@@ -33,5 +38,10 @@ describe("deadline utilities", () => {
   it("removes completed and undated notes from Today", () => {
     expect(belongsToTodayGroup({ deadline: now, isCompleted: true })).toBe(false);
     expect(belongsToTodayGroup({ isCompleted: false })).toBe(false);
+  });
+
+  it("does not throw for an invalid or out-of-range deadline", () => {
+    expect(toDateTimeLocalValue(Number.MAX_SAFE_INTEGER)).toBe("");
+    expect(getDeadlineStatus(Number.MAX_SAFE_INTEGER).label).toBe("截止时间无效");
   });
 });

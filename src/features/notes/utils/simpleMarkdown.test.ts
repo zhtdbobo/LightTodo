@@ -39,8 +39,15 @@ describe("simpleMarkdown", () => {
 
   it("keeps unsafe links as plain text", () => {
     expect(isSafeMarkdownUrl("javascript:alert(1)")).toBe(false);
+    expect(isSafeMarkdownUrl("//attacker.example/path")).toBe(false);
+    expect(isSafeMarkdownUrl("/local/path")).toBe(true);
     expect(parseInlineMarkdown("[bad](javascript:alert(1))")).toEqual([
       { type: "text", text: "[bad](javascript:alert(1))" },
     ]);
+  });
+
+  it("caps deeply nested formatting instead of overflowing the call stack", () => {
+    const nested = "**".repeat(2_000) + "text" + "**".repeat(2_000);
+    expect(() => parseInlineMarkdown(nested)).not.toThrow();
   });
 });

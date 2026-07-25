@@ -1,9 +1,9 @@
 # Tauri specific
 src-tauri/target
-src-tauri/Cargo.lock
 
 # Dependencies
 node_modules/
+.pnpm-store/
 dist/
 
 # Logs

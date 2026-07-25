@@ -15,6 +15,7 @@ export interface Note {
   updatedAt: number;
   syncedAt?: number;
   completedAt?: number;
+  decryptionError?: string | null;
 }
 
 // 创建便签输入
@@ -38,12 +39,14 @@ export interface UpdateNoteInput {
   isTodo?: boolean;
   isCompleted?: boolean;
   color?: string;
+  clearColor?: boolean;
   pinned?: boolean;
   deadline?: number | null;
   clearDeadline?: boolean;
   priority?: number;
   tags?: string[];
   groupId?: string;
+  clearGroup?: boolean;
 }
 
 // 标签类型
@@ -57,6 +60,7 @@ export interface Tag {
 export interface Group {
   id: string;
   name: string;
+  displayOrder: number;
   createdAt: number;
   updatedAt: number;
   deletedAt?: number;
@@ -71,4 +75,5 @@ export interface CreateGroupInput {
 export interface UpdateGroupInput {
   id: string;
   name?: string;
+  displayOrder?: number;
 }

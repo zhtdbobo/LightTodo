@@ -47,6 +47,11 @@ export async function updateGroup(input: UpdateGroupInput): Promise<Group> {
   return toCamelCase(result);
 }
 
+export async function reorderGroups(groupIds: string[]): Promise<Group[]> {
+  const result = await invoke("reorder_groups", { groupIds });
+  return toCamelCase(result);
+}
+
 // 删除分组
 export async function deleteGroup(id: string): Promise<void> {
   await invoke("delete_group", { id });

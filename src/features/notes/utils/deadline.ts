@@ -1,4 +1,26 @@
 const HOUR_MS = 60 * 60 * 1000;
+const MILLIS_TIMESTAMP_FLOOR = 100_000_000_000;
+// Keep timestamps inside JavaScript's supported Date range.  A malformed
+// value from an old database or a remote manifest must not make
+// `toISOString()` throw and unmount the editor.
+const MAX_DATE_TIMESTAMP = 8_640_000_000_000_000;
+
+const normalizeTimestamp = (timestamp: number) => {
+  if (!Number.isFinite(timestamp)) return timestamp;
+  const normalized = timestamp > 0 && timestamp < MILLIS_TIMESTAMP_FLOOR
+    ? timestamp * 1000
+    : timestamp;
+  return normalized;
+};
+
+const asValidDate = (timestamp: number) => {
+  const normalized = normalizeTimestamp(timestamp);
+  if (!Number.isFinite(normalized) || normalized < 0 || normalized > MAX_DATE_TIMESTAMP) {
+    return null;
+  }
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
 
 export type DeadlineStatus = {
   label: string;
@@ -10,7 +32,12 @@ export function belongsToTodayGroup(note: { deadline?: number | null; isComplete
 }
 
 export function getDeadlineStatus(deadline: number, now = Date.now()): DeadlineStatus {
-  const diff = now - deadline;
+  const normalizedDeadline = normalizeTimestamp(deadline);
+  const value = asValidDate(deadline);
+  if (!value) {
+    return { label: "截止时间无效", overdue: false };
+  }
+  const diff = now - normalizedDeadline;
   if (diff > 0) {
     const hours = Math.floor(diff / HOUR_MS);
     return {
@@ -19,7 +46,6 @@ export function getDeadlineStatus(deadline: number, now = Date.now()): DeadlineS
     };
   }
 
-  const value = new Date(deadline);
   const today = new Date(now);
   const isToday = value.getFullYear() === today.getFullYear()
     && value.getMonth() === today.getMonth()
@@ -36,9 +62,13 @@ export function getDeadlineStatus(deadline: number, now = Date.now()): DeadlineS
 
 export function toDateTimeLocalValue(timestamp?: number | null): string {
   if (timestamp == null) return "";
-  const date = new Date(timestamp);
+  const date = asValidDate(timestamp);
+  if (!date) return "";
   const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(timestamp - offset).toISOString().slice(0, 16);
+  const localTimestamp = date.getTime() - offset;
+  const localDate = new Date(localTimestamp);
+  if (Number.isNaN(localDate.getTime())) return "";
+  return localDate.toISOString().slice(0, 16);
 }
 
 export function fromDateTimeLocalValue(value: string): number | undefined {

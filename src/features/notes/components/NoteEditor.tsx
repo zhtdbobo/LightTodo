@@ -60,11 +60,15 @@ export function NoteEditor() {
   // 自动保存
   useEffect(() => {
     if (!selectedNote) return;
+    const selectedId = selectedNote.id;
 
     const saveNote = async () => {
       try {
+        // The debounce timer can outlive a selection change. Never apply the
+        // previous editor's text to the newly selected note.
+        if (useNotesStore.getState().selectedNote?.id !== selectedId) return;
         const input: UpdateNoteInput = {
-          id: selectedNote.id,
+          id: selectedId,
         };
 
         if (debouncedTitle !== selectedNote.title) {
@@ -76,7 +80,9 @@ export function NoteEditor() {
 
         if (Object.keys(input).length > 1) {
           const updated = await updateNote(input);
-          updateNoteInStore(updated);
+          if (useNotesStore.getState().selectedNote?.id === selectedId) {
+            updateNoteInStore(updated);
+          }
         }
       } catch (error) {
         console.error("Failed to auto-save:", error);
@@ -84,7 +90,7 @@ export function NoteEditor() {
     };
 
     saveNote();
-  }, [debouncedTitle, debouncedContent]);
+  }, [debouncedTitle, debouncedContent, selectedNote?.id]);
 
   // 更新 Todo 状态
   const handleToggleTodo = async () => {
@@ -110,6 +116,7 @@ export function NoteEditor() {
       const updated = await updateNote({
         id: selectedNote.id,
         color: newColor,
+        clearColor: newColor == null,
       });
       updateNoteInStore(updated);
     } catch (error) {

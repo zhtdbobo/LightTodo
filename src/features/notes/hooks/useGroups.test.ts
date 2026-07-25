@@ -21,12 +21,14 @@ describe('useGroups API', () => {
           id: 'todo',
           name: '未分类',
           is_default: true,
+          display_order: 0,
           created_at: '2024-01-01',
         },
         {
           id: 'done',
           name: '已完成',
           is_default: true,
+          display_order: 1,
           created_at: '2024-01-01',
         },
       ]
@@ -37,6 +39,7 @@ describe('useGroups API', () => {
 
       expect(invoke).toHaveBeenCalledWith('get_all_groups')
       expect(result[0]).toHaveProperty('isDefault')
+      expect(result[0].displayOrder).toBe(0)
       expect(result[0]).toHaveProperty('createdAt')
     })
   })
@@ -51,6 +54,7 @@ describe('useGroups API', () => {
         id: 'custom-1',
         name: '工作',
         is_default: false,
+        display_order: 0,
         created_at: '2024-01-01',
       }
 
@@ -71,12 +75,14 @@ describe('useGroups API', () => {
       const input = {
         id: 'custom-1',
         name: '个人',
+        displayOrder: 1,
       }
 
       const mockResponse = {
         id: 'custom-1',
         name: '个人',
         is_default: false,
+        display_order: 1,
         created_at: '2024-01-01',
         updated_at: '2024-01-02',
       }
@@ -86,9 +92,10 @@ describe('useGroups API', () => {
       const result = await updateGroup(input)
 
       expect(invoke).toHaveBeenCalledWith('update_group', {
-        input: { id: 'custom-1', name: '个人' },
+        input: { id: 'custom-1', name: '个人', display_order: 1 },
       })
       expect(result.name).toBe('个人')
+      expect(result.displayOrder).toBe(1)
     })
   })
 

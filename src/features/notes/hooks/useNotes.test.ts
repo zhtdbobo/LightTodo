@@ -203,6 +203,16 @@ describe('useNotes API', () => {
         input: { id: '1', clear_deadline: true },
       })
     })
+
+    it('应该支持显式清除颜色', async () => {
+      ;(invoke as any).mockResolvedValue({ id: '1', color: null })
+
+      await updateNote({ id: '1', clearColor: true })
+
+      expect(invoke).toHaveBeenCalledWith('update_note', {
+        input: { id: '1', clear_color: true },
+      })
+    })
   })
 
   describe('deleteNote', () => {

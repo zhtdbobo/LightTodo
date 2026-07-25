@@ -17,6 +17,7 @@ pub struct Note {
     pub updated_at: i64,
     pub synced_at: Option<i64>,
     pub completed_at: Option<i64>,
+    pub decryption_error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -40,12 +41,18 @@ pub struct UpdateNoteInput {
     pub is_todo: Option<bool>,
     pub is_completed: Option<bool>,
     pub color: Option<String>,
+    #[serde(default)]
+    pub clear_color: Option<bool>,
     pub pinned: Option<bool>,
     pub deadline: Option<i64>,
     pub clear_deadline: Option<bool>,
     pub priority: Option<i32>,
     pub tags: Option<Vec<String>>,
     pub group_id: Option<String>,
+    /// `group_id` is optional in the IPC payload, so this flag distinguishes
+    /// "leave the group unchanged" from "move the note to no group".
+    #[serde(default)]
+    pub clear_group: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +66,7 @@ pub struct Tag {
 pub struct Group {
     pub id: String,
     pub name: String,
+    pub display_order: i32,
     pub created_at: i64,
     pub updated_at: i64,
     pub deleted_at: Option<i64>,
@@ -73,4 +81,5 @@ pub struct CreateGroupInput {
 pub struct UpdateGroupInput {
     pub id: String,
     pub name: Option<String>,
+    pub display_order: Option<i32>,
 }

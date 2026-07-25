@@ -15,10 +15,6 @@
     "core:window:allow-get-all-windows",
     "core:webview:allow-create-webview-window",
     "core:webview:allow-get-all-webviews",
-    "core:webview:default",
-    "core:tray:default",
-    "core:menu:default",
-    "core:window:default",
     "core:event:allow-emit",
     "core:event:allow-listen"
   ]

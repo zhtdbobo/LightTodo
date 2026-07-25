@@ -2,17 +2,20 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod credential_store;
+mod crypto;
 mod database;
 mod models;
-mod webdav;
 mod sync;
+mod sync_manifest;
+mod webdav;
 
 use commands::AppState;
 use database::Database;
-use std::sync::Arc;
-use tauri::{Manager, WindowEvent};
-use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState};
+use std::sync::{atomic::AtomicBool, Arc};
 use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Manager, WindowEvent};
 
 fn main() {
     // 初始化数据库
@@ -24,11 +27,26 @@ fn main() {
 
     let db_path = app_dir.join("notes.db");
     let db = Database::new(db_path).expect("Failed to initialize database");
+    if let Err(error) = sync::migrate_webdav_credential(&db) {
+        // A temporary credential-service failure must not make local notes
+        // unusable.  Sync/config commands will keep returning the actionable
+        // storage error until the migration can be retried successfully.
+        eprintln!("Failed to migrate WebDAV credential: {error}");
+    }
+    if let Err(error) = crypto::migrate_legacy_password_notes(&db) {
+        // Keep the database intact and let the UI mark affected password rows
+        // as unavailable instead of aborting the entire application startup.
+        eprintln!("Failed to encrypt legacy password notes: {error}");
+    }
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .manage(AppState { db: Arc::new(db) })
+        .manage(AppState {
+            db: Arc::new(db),
+            sync_lock: Arc::new(tokio::sync::Mutex::new(())),
+            vault_lock: Arc::new(tokio::sync::Mutex::new(())),
+            sync_cancelled: Arc::new(AtomicBool::new(false)),
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_all_notes,
             commands::get_note_by_id,
@@ -40,6 +58,7 @@ fn main() {
             commands::get_all_groups,
             commands::create_group,
             commands::update_group,
+            commands::reorder_groups,
             commands::delete_group,
             sync::get_webdav_config,
             sync::save_webdav_config,
@@ -48,6 +67,7 @@ fn main() {
             sync::push_notes,
             sync::pull_notes,
             sync::reset_sync_state,
+            sync::cancel_sync,
         ])
         .setup(|app| {
             // 创建托盘菜单
@@ -57,46 +77,50 @@ fn main() {
             let menu = Menu::with_items(app, &[&show_i, &settings_i, &quit_i])?;
 
             // 创建系统托盘图标
-            let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("LightTodo")
-                .menu(&menu)
-                .on_menu_event(|app, event| {
-                    match event.id().as_ref() {
-                        "show" => {
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
+            let mut tray_builder = TrayIconBuilder::new().tooltip("LightTodo").menu(&menu);
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+            }
+            let _tray = tray_builder
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
                         }
-                        "settings" => {
-                            use tauri::Manager;
-                            use tauri::WebviewWindowBuilder;
-
-                            if let Some(window) = app.get_webview_window("settings") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            } else {
-                                let _ = WebviewWindowBuilder::new(
-                                    app,
-                                    "settings",
-                                    tauri::WebviewUrl::App("/#settings".into())
-                                )
-                                .title("WebDAV 同步设置")
-                                .inner_size(700.0, 600.0)
-                                .resizable(true)
-                                .center()
-                                .build();
-                            }
-                        }
-                        "quit" => {
-                            app.exit(0);
-                        }
-                        _ => {}
                     }
+                    "settings" => {
+                        use tauri::Manager;
+                        use tauri::WebviewWindowBuilder;
+
+                        if let Some(window) = app.get_webview_window("settings") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        } else {
+                            let _ = WebviewWindowBuilder::new(
+                                app,
+                                "settings",
+                                tauri::WebviewUrl::App("/#settings".into()),
+                            )
+                            .title("WebDAV 同步设置")
+                            .inner_size(700.0, 600.0)
+                            .resizable(true)
+                            .center()
+                            .build();
+                        }
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click { button, button_state, .. } = event {
+                    if let TrayIconEvent::Click {
+                        button,
+                        button_state,
+                        ..
+                    } = event
+                    {
                         if button == MouseButton::Left && button_state == MouseButtonState::Up {
                             // 左键点击：显示/隐藏窗口
                             let app = tray.app_handle();
@@ -116,11 +140,13 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                // 阻止窗口关闭
-                api.prevent_close();
-                // 隐藏窗口到任务栏
-                window.hide().unwrap();
+            if window.label() == "main" {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    // 阻止窗口关闭
+                    api.prevent_close();
+                    // 隐藏窗口到任务栏
+                    let _ = window.hide();
+                }
             }
         })
         .run(tauri::generate_context!())

@@ -1,17 +1,133 @@
-use crate::database::Database;
-use crate::models::{CreateNoteInput, Note, Tag, UpdateNoteInput, Group, CreateGroupInput, UpdateGroupInput};
+use crate::crypto;
+use crate::database::{deduplicate_blank_drafts, Database};
+use crate::models::{
+    CreateGroupInput, CreateNoteInput, Group, Note, Tag, UpdateGroupInput, UpdateNoteInput,
+};
 use rusqlite::{params, OptionalExtension};
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{atomic::AtomicBool, Arc},
+};
 use tauri::State;
+use tokio::sync::Mutex as AsyncMutex;
+
+const MAX_TITLE_BYTES: usize = 1024 * 1024;
+const MAX_CONTENT_BYTES: usize = 1024 * 1024;
+const MAX_GROUP_NAME_BYTES: usize = 256;
+const MAX_COLOR_BYTES: usize = 256;
+const MAX_TAGS: usize = 100;
+const MAX_TAG_BYTES: usize = 128;
+// Keep IPC timestamps inside JavaScript's Date range.  Without this bound a
+// malformed request could persist i64::MAX and later make the date picker
+// throw while converting it to an ISO string.
+const MAX_TIMESTAMP_MS: i64 = 8_640_000_000_000_000;
+
+fn next_timestamp(previous: i64) -> Result<i64, String> {
+    if previous > MAX_TIMESTAMP_MS {
+        return Err("Existing timestamp is outside the supported date range".to_string());
+    }
+    let next = chrono::Utc::now()
+        .timestamp_millis()
+        .max(previous.saturating_add(1));
+    if next > MAX_TIMESTAMP_MS {
+        return Err("Timestamp range has been exhausted".to_string());
+    }
+    Ok(next)
+}
+
+fn validate_text_size(label: &str, value: &str, max_bytes: usize) -> Result<(), String> {
+    if value.contains('\0') {
+        return Err(format!("{label} cannot contain NUL characters"));
+    }
+    if value.len() > max_bytes {
+        return Err(format!("{label} exceeds the {max_bytes}-byte limit"));
+    }
+    Ok(())
+}
+
+fn validate_entity_id(label: &str, id: &str) -> Result<(), String> {
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(format!("{label} has an invalid ID"));
+    }
+    Ok(())
+}
+
+fn next_database_timestamp(conn: &rusqlite::Connection) -> Result<i64, String> {
+    let latest = conn
+        .query_row(
+            "SELECT COALESCE(MAX(value), 0)
+             FROM (
+               SELECT MAX(updated_at) AS value FROM notes
+               UNION ALL SELECT MAX(updated_at) FROM groups
+               UNION ALL SELECT MAX(deleted_at) FROM note_tombstones
+             )",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| error.to_string())?;
+    next_timestamp(latest)
+}
+
+fn normalize_tags(tags: &[String]) -> Result<Vec<String>, String> {
+    if tags.len() > MAX_TAGS {
+        return Err(format!("Too many tags (maximum {MAX_TAGS})"));
+    }
+    let mut normalized = Vec::new();
+    for tag in tags {
+        let tag = tag.trim();
+        if tag.is_empty() {
+            continue;
+        }
+        validate_text_size("Tag", tag, MAX_TAG_BYTES)?;
+        if !normalized.iter().any(|existing| existing == tag) {
+            normalized.push(tag.to_string());
+        }
+    }
+    Ok(normalized)
+}
+
+fn validate_group_id(conn: &rusqlite::Connection, group_id: Option<&str>) -> Result<(), String> {
+    let Some(group_id) = group_id else {
+        return Ok(());
+    };
+    validate_entity_id("Group", group_id)?;
+    let exists = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM groups WHERE id = ?1 AND deleted_at IS NULL)",
+            [group_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if !exists {
+        return Err("Target group does not exist".to_string());
+    }
+    Ok(())
+}
 
 pub struct AppState {
     pub db: Arc<Database>,
+    /// Prevents two sync jobs in the same process from interleaving their
+    /// manifest read/merge/write cycles.
+    pub sync_lock: Arc<AsyncMutex<()>>,
+    /// Serializes vault-key changes with password-note reads and writes.
+    pub vault_lock: Arc<AsyncMutex<()>>,
+    /// Allows the UI to request cancellation between network operations.
+    pub sync_cancelled: Arc<AtomicBool>,
 }
 
 #[tauri::command]
 pub async fn get_all_notes(state: State<'_, AppState>) -> Result<Vec<Note>, String> {
+    let _vault_guard = state.vault_lock.lock().await;
     let conn = state.db.get_connection();
     let conn = conn.lock();
+    let mut vault_key = None;
+    let mut vault_key_error: Option<String> = None;
+    let tags_by_note = get_all_note_tags(&conn).map_err(|error| error.to_string())?;
 
     let mut stmt = conn
         .prepare(
@@ -34,7 +150,7 @@ pub async fn get_all_notes(state: State<'_, AppState>) -> Result<Vec<Note>, Stri
                 is_completed: row.get::<_, i64>(4)? != 0,
                 color: row.get(5)?,
                 pinned: row.get::<_, i64>(6)? != 0,
-                priority: row.get::<_, i64>(7)? as i32,
+                priority: row.get::<_, i32>(7)?,
                 tags: Vec::new(), // 稍后填充
                 created_at: row.get(8)?,
                 updated_at: row.get(9)?,
@@ -42,6 +158,7 @@ pub async fn get_all_notes(state: State<'_, AppState>) -> Result<Vec<Note>, Stri
                 group_id: row.get(11)?,
                 completed_at: row.get(12)?,
                 deadline: row.get(13)?,
+                decryption_error: None,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -49,9 +166,40 @@ pub async fn get_all_notes(state: State<'_, AppState>) -> Result<Vec<Note>, Stri
     let mut result = Vec::new();
     for note_result in notes {
         let mut note = note_result.map_err(|e| e.to_string())?;
+        note.tags = tags_by_note.get(&note.id).cloned().unwrap_or_default();
 
-        // 获取便签的标签
-        note.tags = get_note_tags(&conn, &note.id).map_err(|e| e.to_string())?;
+        if note.content == crypto::PASSWORD_NOTE_MARKER {
+            if let Some(error) = vault_key_error.as_ref() {
+                note.title = crypto::PASSWORD_DECRYPTION_ERROR_TITLE.to_string();
+                note.decryption_error = Some(error.clone());
+                result.push(note);
+                continue;
+            }
+            let key = match vault_key {
+                Some(key) => key,
+                None => match crypto::load_vault_key() {
+                    Ok(key) => {
+                        vault_key = Some(key);
+                        key
+                    }
+                    Err(error) => {
+                        vault_key_error = Some(error.clone());
+                        note.title = crypto::PASSWORD_DECRYPTION_ERROR_TITLE.to_string();
+                        note.decryption_error = Some(error);
+                        result.push(note);
+                        continue;
+                    }
+                },
+            };
+            match crypto::decrypt_note_title_with_key(&note.id, &note.title, &key) {
+                Ok(title) => note.title = title,
+                Err(error) => {
+                    eprintln!("Failed to decrypt password note {}: {}", note.id, error);
+                    note.title = crypto::PASSWORD_DECRYPTION_ERROR_TITLE.to_string();
+                    note.decryption_error = Some(error);
+                }
+            }
+        }
         result.push(note);
     }
 
@@ -59,58 +207,71 @@ pub async fn get_all_notes(state: State<'_, AppState>) -> Result<Vec<Note>, Stri
 }
 
 #[tauri::command]
-pub async fn get_note_by_id(id: String, state: State<'_, AppState>) -> Result<Option<Note>, String> {
+pub async fn get_note_by_id(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<Note>, String> {
+    validate_entity_id("Note", &id)?;
+    let _vault_guard = state.vault_lock.lock().await;
     let conn = state.db.get_connection();
     let conn = conn.lock();
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, title, content, is_todo, is_completed, color, pinned, priority,
-                    created_at, updated_at, synced_at, group_id, completed_at, deadline
-             FROM notes WHERE id = ?1",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let note = stmt
-        .query_row([&id], |row| {
-            Ok(Note {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                content: row.get(2)?,
-                is_todo: row.get::<_, i64>(3)? != 0,
-                is_completed: row.get::<_, i64>(4)? != 0,
-                color: row.get(5)?,
-                pinned: row.get::<_, i64>(6)? != 0,
-                priority: row.get::<_, i64>(7)? as i32,
-                tags: Vec::new(),
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
-                synced_at: row.get(10)?,
-                group_id: row.get(11)?,
-                completed_at: row.get(12)?,
-                deadline: row.get(13)?,
-            })
-        })
-        .optional()
-        .map_err(|e| e.to_string())?;
-
-    if let Some(mut note) = note {
-        note.tags = get_note_tags(&conn, &note.id).map_err(|e| e.to_string())?;
-        Ok(Some(note))
-    } else {
-        Ok(None)
-    }
+    query_note_by_id(&conn, &id).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub async fn create_note(input: CreateNoteInput, state: State<'_, AppState>) -> Result<Note, String> {
+pub async fn create_note(
+    input: CreateNoteInput,
+    state: State<'_, AppState>,
+) -> Result<Note, String> {
+    let _vault_guard = state.vault_lock.lock().await;
     let conn = state.db.get_connection();
     let mut conn = conn.lock();
 
+    validate_text_size("Title", &input.title, MAX_TITLE_BYTES)?;
+    validate_text_size("Content", &input.content, MAX_CONTENT_BYTES)?;
+    if let Some(color) = input.color.as_deref() {
+        validate_text_size("Color", color, MAX_COLOR_BYTES)?;
+    }
+    if !(0..=2).contains(&input.priority.unwrap_or(0)) {
+        return Err("Priority must be between 0 and 2".to_string());
+    }
+    if input
+        .deadline
+        .is_some_and(|deadline| !(0..=MAX_TIMESTAMP_MS).contains(&deadline))
+    {
+        return Err("Deadline is outside the supported date range".to_string());
+    }
+    validate_group_id(&conn, input.group_id.as_deref())?;
+    let tags = normalize_tags(&input.tags)?;
+
+    let is_blank_draft =
+        input.is_todo && input.title.trim().is_empty() && input.content.trim().is_empty();
+    if is_blank_draft {
+        let existing_id = conn
+            .query_row(
+                "SELECT id FROM notes
+                 WHERE is_todo = 1 AND is_completed = 0
+                   AND TRIM(title) = '' AND TRIM(content) = ''
+                   AND COALESCE(group_id, '') = COALESCE(?1, '')
+                 ORDER BY updated_at DESC, id DESC
+                 LIMIT 1",
+                params![input.group_id.as_deref()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        if let Some(existing_id) = existing_id {
+            return query_note_by_id(&conn, &existing_id)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "Existing blank note disappeared".to_string());
+        }
+    }
+
     let id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().timestamp();
+    let now = next_database_timestamp(&conn)?;
     let priority = input.priority.unwrap_or(0);
     let pinned = input.pinned.unwrap_or(false);
+    let stored_title = crypto::encrypt_note_title(&id, &input.content, &input.title)?;
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
@@ -119,7 +280,7 @@ pub async fn create_note(input: CreateNoteInput, state: State<'_, AppState>) -> 
          VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, ?8, ?9, ?10)",
         params![
             &id,
-            &input.title,
+            &stored_title,
             &input.content,
             input.is_todo as i64,
             &input.color,
@@ -133,7 +294,7 @@ pub async fn create_note(input: CreateNoteInput, state: State<'_, AppState>) -> 
     .map_err(|e| e.to_string())?;
 
     // 插入标签
-    for tag_name in &input.tags {
+    for tag_name in &tags {
         insert_tag_for_note(&tx, &id, tag_name).map_err(|e| e.to_string())?;
     }
 
@@ -148,184 +309,242 @@ pub async fn create_note(input: CreateNoteInput, state: State<'_, AppState>) -> 
         color: input.color,
         pinned,
         priority,
-        tags: input.tags,
+        tags,
         group_id: input.group_id,
         created_at: now,
         updated_at: now,
         synced_at: None,
         completed_at: None,
         deadline: input.deadline,
+        decryption_error: None,
     })
 }
 
 #[tauri::command]
-pub async fn update_note(input: UpdateNoteInput, state: State<'_, AppState>) -> Result<Note, String> {
+pub async fn update_note(
+    input: UpdateNoteInput,
+    state: State<'_, AppState>,
+) -> Result<Note, String> {
+    let _vault_guard = state.vault_lock.lock().await;
+    validate_entity_id("Note", &input.id)?;
     let conn = state.db.get_connection();
-    let now = chrono::Utc::now().timestamp();
-
-    // 在闭包内完成所有数据库操作
-    {
-        let mut conn = conn.lock();
-        let tx = conn.transaction().map_err(|e| e.to_string())?;
-
-        // 构建动态更新语句
-        let mut updates = vec!["updated_at = ?1".to_string()];
-        let mut update_count = 1;
-
-        if input.title.is_some() {
-            update_count += 1;
-            updates.push(format!("title = ?{}", update_count));
-        }
-        if input.content.is_some() {
-            update_count += 1;
-            updates.push(format!("content = ?{}", update_count));
-        }
-        if input.is_todo.is_some() {
-            update_count += 1;
-            updates.push(format!("is_todo = ?{}", update_count));
-        }
-        if input.is_completed.is_some() {
-            update_count += 1;
-            updates.push(format!("is_completed = ?{}", update_count));
-
-            // 只有在从未完成变为完成时，才设置 completed_at
-            // 需要判断当前 completed_at 是否为 NULL
-            update_count += 1;
-            updates.push(format!("completed_at = CASE WHEN ?{} = 1 AND completed_at IS NULL THEN ?{} ELSE completed_at END", update_count, update_count + 1));
-            update_count += 1;
-        }
-        if input.color.is_some() {
-            update_count += 1;
-            updates.push(format!("color = ?{}", update_count));
-        }
-        if input.pinned.is_some() {
-            update_count += 1;
-            updates.push(format!("pinned = ?{}", update_count));
-        }
-        if input.priority.is_some() {
-            update_count += 1;
-            updates.push(format!("priority = ?{}", update_count));
-        }
-        if input.group_id.is_some() {
-            update_count += 1;
-            updates.push(format!("group_id = ?{}", update_count));
-        }
-        if input.deadline.is_some() || input.clear_deadline.unwrap_or(false) {
-            update_count += 1;
-            updates.push(format!("deadline = ?{}", update_count));
-        }
-
-        let sql = format!(
-            "UPDATE notes SET {} WHERE id = ?{}",
-            updates.join(", "),
-            update_count + 1
-        );
-
-        // 使用 execute 和具体参数
-        {
-            let mut stmt = tx.prepare(&sql).map_err(|e| e.to_string())?;
-            let mut param_index = 1;
-
-            stmt.raw_bind_parameter(param_index, now).map_err(|e| e.to_string())?;
-            param_index += 1;
-
-            if let Some(ref title) = input.title {
-                stmt.raw_bind_parameter(param_index, title).map_err(|e| e.to_string())?;
-                param_index += 1;
-            }
-            if let Some(ref content) = input.content {
-                stmt.raw_bind_parameter(param_index, content).map_err(|e| e.to_string())?;
-                param_index += 1;
-            }
-            if let Some(is_todo) = input.is_todo {
-                stmt.raw_bind_parameter(param_index, is_todo as i64).map_err(|e| e.to_string())?;
-                param_index += 1;
-            }
-            if let Some(is_completed) = input.is_completed {
-                stmt.raw_bind_parameter(param_index, is_completed as i64).map_err(|e| e.to_string())?;
-                param_index += 1;
-
-                // 为 CASE 表达式绑定参数：is_completed 值
-                stmt.raw_bind_parameter(param_index, is_completed as i64).map_err(|e| e.to_string())?;
-                param_index += 1;
-
-                // 为 CASE 表达式绑定参数：completed_at 时间戳
-                stmt.raw_bind_parameter(param_index, now).map_err(|e| e.to_string())?;
-                param_index += 1;
-            }
-            if let Some(ref color) = input.color {
-                stmt.raw_bind_parameter(param_index, color).map_err(|e| e.to_string())?;
-                param_index += 1;
-            }
-            if let Some(pinned) = input.pinned {
-                stmt.raw_bind_parameter(param_index, pinned as i64).map_err(|e| e.to_string())?;
-                param_index += 1;
-            }
-            if let Some(priority) = input.priority {
-                stmt.raw_bind_parameter(param_index, priority as i64).map_err(|e| e.to_string())?;
-                param_index += 1;
-            }
-            if let Some(ref group_id) = input.group_id {
-                stmt.raw_bind_parameter(param_index, group_id).map_err(|e| e.to_string())?;
-                param_index += 1;
-            }
-            if input.deadline.is_some() || input.clear_deadline.unwrap_or(false) {
-                stmt.raw_bind_parameter(param_index, input.deadline).map_err(|e| e.to_string())?;
-                param_index += 1;
-            }
-            stmt.raw_bind_parameter(param_index, &input.id).map_err(|e| e.to_string())?;
-
-            stmt.raw_execute().map_err(|e| e.to_string())?;
-        } // stmt 在这里被 drop
-
-        // 更新标签
-        if let Some(ref tags) = input.tags {
-            tx.execute("DELETE FROM note_tags WHERE note_id = ?1", [&input.id])
-                .map_err(|e| e.to_string())?;
-
-            for tag_name in tags {
-                insert_tag_for_note(&tx, &input.id, tag_name).map_err(|e| e.to_string())?;
-            }
-        }
-
-        tx.commit().map_err(|e| e.to_string())?;
+    validate_text_size(
+        "Title",
+        input.title.as_deref().unwrap_or(""),
+        MAX_TITLE_BYTES,
+    )?;
+    validate_text_size(
+        "Content",
+        input.content.as_deref().unwrap_or(""),
+        MAX_CONTENT_BYTES,
+    )?;
+    if let Some(color) = input.color.as_deref() {
+        validate_text_size("Color", color, MAX_COLOR_BYTES)?;
     }
+    if let Some(priority) = input.priority {
+        if !(0..=2).contains(&priority) {
+            return Err("Priority must be between 0 and 2".to_string());
+        }
+    }
+    if input
+        .deadline
+        .is_some_and(|deadline| !(0..=MAX_TIMESTAMP_MS).contains(&deadline))
+    {
+        return Err("Deadline is outside the supported date range".to_string());
+    }
+    let normalized_tags = input.tags.as_deref().map(normalize_tags).transpose()?;
 
-    // 释放锁后再查询
-    get_note_by_id(input.id, state)
-        .await?
+    let mut conn = conn.lock();
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let current = tx
+        .query_row(
+            "SELECT title, content, is_todo, is_completed, color, pinned, priority,
+                    group_id, created_at, updated_at, completed_at, deadline
+             FROM notes WHERE id = ?1",
+            [&input.id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)? != 0,
+                    row.get::<_, i64>(3)? != 0,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, i64>(5)? != 0,
+                    row.get::<_, i32>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, i64>(9)?,
+                    row.get::<_, Option<i64>>(10)?,
+                    row.get::<_, Option<i64>>(11)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Note not found".to_string())?;
+
+    let current_title = crypto::decrypt_note_title(&input.id, &current.1, &current.0)?;
+    let next_title = input.title.clone().unwrap_or(current_title);
+    let next_content = input.content.clone().unwrap_or(current.1);
+    let stored_title = crypto::encrypt_note_title(&input.id, &next_content, &next_title)?;
+    let next_is_todo = input.is_todo.unwrap_or(current.2);
+    let next_completed = input.is_completed.unwrap_or(current.3);
+    let next_color = if input.clear_color.unwrap_or(false) {
+        None
+    } else if input.color.is_some() {
+        input.color.clone()
+    } else {
+        current.4
+    };
+    let next_pinned = input.pinned.unwrap_or(current.5);
+    let next_priority = input.priority.unwrap_or(current.6);
+    let next_group_id = if input.clear_group.unwrap_or(false) {
+        None
+    } else if input.group_id.is_some() {
+        input
+            .group_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    } else {
+        current.7
+    };
+    validate_group_id(&tx, next_group_id.as_deref())?;
+    let next_deadline = if input.clear_deadline.unwrap_or(false) {
+        None
+    } else if input.deadline.is_some() {
+        input.deadline
+    } else {
+        current.11
+    };
+
+    if next_is_todo
+        && !next_completed
+        && next_title.trim().is_empty()
+        && next_content.trim().is_empty()
+    {
+        let duplicate = tx
+            .query_row(
+                "SELECT id FROM notes
+                 WHERE id <> ?1 AND is_todo = 1 AND is_completed = 0
+                   AND TRIM(title) = '' AND TRIM(content) = ''
+                   AND COALESCE(group_id, '') = COALESCE(?2, '')
+                 LIMIT 1",
+                params![&input.id, next_group_id.as_deref()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        if let Some(duplicate) = duplicate {
+            return Err(format!(
+                "A blank todo already exists in this group ({duplicate})"
+            ));
+        }
+    }
+    let now = next_timestamp(current.9)?;
+    let next_completed_at = if next_completed {
+        if current.3 {
+            current.10
+        } else {
+            Some(now)
+        }
+    } else {
+        None
+    };
+
+    tx.execute(
+        "UPDATE notes SET
+           title = ?1, content = ?2, is_todo = ?3, is_completed = ?4,
+           color = ?5, pinned = ?6, priority = ?7, group_id = ?8,
+           updated_at = ?9, completed_at = ?10, deadline = ?11
+         WHERE id = ?12",
+        params![
+            stored_title,
+            next_content,
+            next_is_todo as i64,
+            next_completed as i64,
+            next_color,
+            next_pinned as i64,
+            next_priority,
+            next_group_id,
+            now,
+            next_completed_at,
+            next_deadline,
+            &input.id,
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+
+    if let Some(tags) = normalized_tags {
+        tx.execute("DELETE FROM note_tags WHERE note_id = ?1", [&input.id])
+            .map_err(|error| error.to_string())?;
+        for tag_name in &tags {
+            insert_tag_for_note(&tx, &input.id, tag_name).map_err(|error| error.to_string())?;
+        }
+    }
+    tx.commit().map_err(|error| error.to_string())?;
+
+    query_note_by_id(&conn, &input.id)
+        .map_err(|error| error.to_string())?
         .ok_or_else(|| "Note not found after update".to_string())
 }
 
 #[tauri::command]
 pub async fn delete_note(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    validate_entity_id("Note", &id)?;
+    let _vault_guard = state.vault_lock.lock().await;
     let conn = state.db.get_connection();
-    let conn = conn.lock();
+    let mut conn = conn.lock();
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    conn.execute("DELETE FROM notes WHERE id = ?1", [&id])
+    let previous_updated = tx
+        .query_row("SELECT updated_at FROM notes WHERE id = ?1", [&id], |row| {
+            row.get::<_, i64>(0)
+        })
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some(previous_updated) = previous_updated else {
+        tx.commit().map_err(|error| error.to_string())?;
+        return Ok(());
+    };
+    let deleted_at = next_timestamp(previous_updated)?;
+
+    tx.execute(
+        "INSERT INTO note_tombstones (note_id, deleted_at)
+         VALUES (?1, ?2)
+         ON CONFLICT(note_id) DO UPDATE SET deleted_at = MAX(deleted_at, excluded.deleted_at)",
+        params![&id, deleted_at],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM notes WHERE id = ?1", [&id])
         .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
 #[tauri::command]
 pub async fn search_notes(query: String, state: State<'_, AppState>) -> Result<Vec<Note>, String> {
+    validate_text_size("Search query", &query, 4096)?;
+    let _vault_guard = state.vault_lock.lock().await;
     let conn = state.db.get_connection();
     let conn = conn.lock();
+    let mut vault_key = None;
+    let mut vault_key_error: Option<String> = None;
+    let tags_by_note = get_all_note_tags(&conn).map_err(|error| error.to_string())?;
 
-    let search_pattern = format!("%{}%", query);
     let mut stmt = conn
         .prepare(
             "SELECT id, title, content, is_todo, is_completed, color, pinned, priority,
                     created_at, updated_at, synced_at, group_id, completed_at, deadline
              FROM notes
-             WHERE title LIKE ?1 OR content LIKE ?1
              ORDER BY pinned DESC, priority DESC, updated_at DESC",
         )
         .map_err(|e| e.to_string())?;
 
     let notes = stmt
-        .query_map([&search_pattern], |row| {
+        .query_map([], |row| {
             Ok(Note {
                 id: row.get(0)?,
                 title: row.get(1)?,
@@ -334,7 +553,7 @@ pub async fn search_notes(query: String, state: State<'_, AppState>) -> Result<V
                 is_completed: row.get::<_, i64>(4)? != 0,
                 color: row.get(5)?,
                 pinned: row.get::<_, i64>(6)? != 0,
-                priority: row.get::<_, i64>(7)? as i32,
+                priority: row.get::<_, i32>(7)?,
                 tags: Vec::new(),
                 created_at: row.get(8)?,
                 updated_at: row.get(9)?,
@@ -342,14 +561,57 @@ pub async fn search_notes(query: String, state: State<'_, AppState>) -> Result<V
                 group_id: row.get(11)?,
                 completed_at: row.get(12)?,
                 deadline: row.get(13)?,
+                decryption_error: None,
             })
         })
         .map_err(|e| e.to_string())?;
 
     let mut result = Vec::new();
+    let normalized_query = query.to_lowercase();
     for note_result in notes {
         let mut note = note_result.map_err(|e| e.to_string())?;
-        note.tags = get_note_tags(&conn, &note.id).map_err(|e| e.to_string())?;
+        note.tags = tags_by_note.get(&note.id).cloned().unwrap_or_default();
+        if note.content == crypto::PASSWORD_NOTE_MARKER {
+            if let Some(error) = vault_key_error.as_ref() {
+                note.title = crypto::PASSWORD_DECRYPTION_ERROR_TITLE.to_string();
+                note.decryption_error = Some(error.clone());
+            } else {
+                let key = match vault_key {
+                    Some(key) => key,
+                    None => match crypto::load_vault_key() {
+                        Ok(key) => {
+                            vault_key = Some(key);
+                            key
+                        }
+                        Err(error) => {
+                            vault_key_error = Some(error.clone());
+                            note.title = crypto::PASSWORD_DECRYPTION_ERROR_TITLE.to_string();
+                            note.decryption_error = Some(error);
+                            if !note.title.to_lowercase().contains(&normalized_query)
+                                && !note.content.to_lowercase().contains(&normalized_query)
+                            {
+                                continue;
+                            }
+                            result.push(note);
+                            continue;
+                        }
+                    },
+                };
+                match crypto::decrypt_note_title_with_key(&note.id, &note.title, &key) {
+                    Ok(title) => note.title = title,
+                    Err(error) => {
+                        eprintln!("Failed to decrypt password note {}: {}", note.id, error);
+                        note.title = crypto::PASSWORD_DECRYPTION_ERROR_TITLE.to_string();
+                        note.decryption_error = Some(error);
+                    }
+                }
+            }
+        }
+        if !note.title.to_lowercase().contains(&normalized_query)
+            && !note.content.to_lowercase().contains(&normalized_query)
+        {
+            continue;
+        }
         result.push(note);
     }
 
@@ -380,6 +642,52 @@ pub async fn get_all_tags(state: State<'_, AppState>) -> Result<Vec<Tag>, String
     Ok(tags)
 }
 
+fn query_note_by_id(conn: &rusqlite::Connection, id: &str) -> Result<Option<Note>, String> {
+    let note = conn
+        .query_row(
+            "SELECT id, title, content, is_todo, is_completed, color, pinned, priority,
+                    created_at, updated_at, synced_at, group_id, completed_at, deadline
+             FROM notes WHERE id = ?1",
+            [id],
+            |row| {
+                Ok(Note {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    content: row.get(2)?,
+                    is_todo: row.get::<_, i64>(3)? != 0,
+                    is_completed: row.get::<_, i64>(4)? != 0,
+                    color: row.get(5)?,
+                    pinned: row.get::<_, i64>(6)? != 0,
+                    priority: row.get::<_, i32>(7)?,
+                    tags: Vec::new(),
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                    synced_at: row.get(10)?,
+                    group_id: row.get(11)?,
+                    completed_at: row.get(12)?,
+                    deadline: row.get(13)?,
+                    decryption_error: None,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    note.map(|mut note| {
+        if note.content == crypto::PASSWORD_NOTE_MARKER {
+            match crypto::decrypt_note_title(&note.id, &note.content, &note.title) {
+                Ok(title) => note.title = title,
+                Err(error) => {
+                    note.title = crypto::PASSWORD_DECRYPTION_ERROR_TITLE.to_string();
+                    note.decryption_error = Some(error);
+                }
+            }
+        }
+        note.tags = get_note_tags(conn, &note.id).map_err(|error| error.to_string())?;
+        Ok(note)
+    })
+    .transpose()
+}
+
 // 辅助函数
 fn get_note_tags(conn: &rusqlite::Connection, note_id: &str) -> rusqlite::Result<Vec<String>> {
     let mut stmt = conn.prepare(
@@ -394,6 +702,26 @@ fn get_note_tags(conn: &rusqlite::Connection, note_id: &str) -> rusqlite::Result
         .collect::<Result<Vec<String>, _>>()?;
 
     Ok(tags)
+}
+
+fn get_all_note_tags(
+    conn: &rusqlite::Connection,
+) -> rusqlite::Result<HashMap<String, Vec<String>>> {
+    let mut statement = conn.prepare(
+        "SELECT nt.note_id, t.name
+         FROM note_tags nt
+         INNER JOIN tags t ON t.id = nt.tag_id
+         ORDER BY nt.note_id, t.name",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut tags_by_note = HashMap::<String, Vec<String>>::new();
+    for row in rows {
+        let (note_id, tag) = row?;
+        tags_by_note.entry(note_id).or_default().push(tag);
+    }
+    Ok(tags_by_note)
 }
 
 fn insert_tag_for_note(
@@ -412,7 +740,7 @@ fn insert_tag_for_note(
         id
     } else {
         let new_id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().timestamp();
+        let now = chrono::Utc::now().timestamp_millis();
         tx.execute(
             "INSERT INTO tags (id, name, created_at) VALUES (?1, ?2, ?3)",
             params![&new_id, tag_name, now],
@@ -437,12 +765,15 @@ pub async fn get_all_groups(state: State<'_, AppState>) -> Result<Vec<Group>, St
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, name, created_at, updated_at, deleted_at
+            "SELECT id, name, display_order, created_at, updated_at, deleted_at
              FROM groups
              WHERE deleted_at IS NULL
              ORDER BY
+                display_order ASC,
                 CASE WHEN name GLOB '[A-Za-z]*' THEN 0 ELSE 1 END,
-                name COLLATE NOCASE ASC",
+                name COLLATE NOCASE ASC,
+                created_at ASC,
+                id ASC",
         )
         .map_err(|e| e.to_string())?;
 
@@ -451,9 +782,10 @@ pub async fn get_all_groups(state: State<'_, AppState>) -> Result<Vec<Group>, St
             Ok(Group {
                 id: row.get(0)?,
                 name: row.get(1)?,
-                created_at: row.get(2)?,
-                updated_at: row.get(3)?,
-                deleted_at: row.get(4)?,
+                display_order: row.get::<_, i32>(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+                deleted_at: row.get(5)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -464,23 +796,58 @@ pub async fn get_all_groups(state: State<'_, AppState>) -> Result<Vec<Group>, St
 }
 
 #[tauri::command]
-pub async fn create_group(input: CreateGroupInput, state: State<'_, AppState>) -> Result<Group, String> {
+pub async fn create_group(
+    input: CreateGroupInput,
+    state: State<'_, AppState>,
+) -> Result<Group, String> {
+    let _vault_guard = state.vault_lock.lock().await;
     let conn = state.db.get_connection();
     let conn = conn.lock();
 
+    let name = input.name.trim().to_string();
+    if name.is_empty() {
+        return Err("Group name cannot be empty".to_string());
+    }
+    validate_text_size("Group name", &name, MAX_GROUP_NAME_BYTES)?;
+    let duplicate = conn
+        .query_row(
+            "SELECT id FROM groups WHERE name = ?1 AND deleted_at IS NULL LIMIT 1",
+            [&name],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    if duplicate.is_some() {
+        return Err("A group with this name already exists".to_string());
+    }
+
     let id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().timestamp();
+    let now = next_database_timestamp(&conn)?;
+    let next_display_order = conn
+        .query_row(
+            "SELECT COALESCE(MAX(display_order), -1)
+             FROM groups
+             WHERE deleted_at IS NULL",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|e| e.to_string())?
+        .checked_add(1)
+        .ok_or_else(|| "Group display order has reached its limit".to_string())?;
+    let display_order = i32::try_from(next_display_order)
+        .map_err(|_| "Group display order has reached its limit".to_string())?;
 
     conn.execute(
-        "INSERT INTO groups (id, name, created_at, updated_at, deleted_at)
-         VALUES (?1, ?2, ?3, ?3, NULL)",
-        params![&id, &input.name, now],
+        "INSERT INTO groups (id, name, display_order, created_at, updated_at, deleted_at)
+         VALUES (?1, ?2, ?3, ?4, ?4, NULL)",
+        params![&id, &name, display_order, now],
     )
     .map_err(|e| e.to_string())?;
 
     Ok(Group {
         id,
-        name: input.name,
+        name,
+        display_order,
         created_at: now,
         updated_at: now,
         deleted_at: None,
@@ -488,79 +855,202 @@ pub async fn create_group(input: CreateGroupInput, state: State<'_, AppState>) -
 }
 
 #[tauri::command]
-pub async fn update_group(input: UpdateGroupInput, state: State<'_, AppState>) -> Result<Group, String> {
+pub async fn update_group(
+    input: UpdateGroupInput,
+    state: State<'_, AppState>,
+) -> Result<Group, String> {
+    let _vault_guard = state.vault_lock.lock().await;
+    validate_entity_id("Group", &input.id)?;
     let conn = state.db.get_connection();
-    let conn = conn.lock();
-    let now = chrono::Utc::now().timestamp();
-
-    let mut updates = vec!["updated_at = ?1".to_string(), "deleted_at = NULL".to_string()];
-    let mut update_count = 1;
-
-    if input.name.is_some() {
-        update_count += 1;
-        updates.push(format!("name = ?{}", update_count));
-    }
-
-    if input.name.is_none() {
+    let mut conn = conn.lock();
+    if input.name.is_none() && input.display_order.is_none() {
         return Err("No fields to update".to_string());
     }
-
-    let sql = format!(
-        "UPDATE groups SET {} WHERE id = ?{}",
-        updates.join(", "),
-        update_count + 1
-    );
-
-    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-    let mut param_index = 1;
-
-    stmt.raw_bind_parameter(param_index, now).map_err(|e| e.to_string())?;
-    param_index += 1;
-
-    if let Some(ref name) = input.name {
-        stmt.raw_bind_parameter(param_index, name).map_err(|e| e.to_string())?;
-        param_index += 1;
+    if let Some(name) = input.name.as_deref() {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("Group name cannot be empty".to_string());
+        }
+        validate_text_size("Group name", name, MAX_GROUP_NAME_BYTES)?;
     }
-    stmt.raw_bind_parameter(param_index, &input.id).map_err(|e| e.to_string())?;
+    if input.display_order.is_some_and(|order| order < 0) {
+        return Err("Display order cannot be negative".to_string());
+    }
 
-    stmt.raw_execute().map_err(|e| e.to_string())?;
-
-    // 查询更新后的分组
-    let group = conn
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let current = tx
         .query_row(
-            "SELECT id, name, created_at, updated_at, deleted_at
-             FROM groups
-             WHERE id = ?1 AND deleted_at IS NULL",
+            "SELECT name, display_order, created_at, updated_at
+             FROM groups WHERE id = ?1 AND deleted_at IS NULL",
             [&input.id],
             |row| {
-                Ok(Group {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    created_at: row.get(2)?,
-                    updated_at: row.get(3)?,
-                    deleted_at: row.get(4)?,
-                })
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i32>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
             },
         )
-        .map_err(|e| e.to_string())?;
+        .optional()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Group not found".to_string())?;
+    let name = input
+        .name
+        .as_deref()
+        .map(str::trim)
+        .map(ToOwned::to_owned)
+        .unwrap_or(current.0);
+    let duplicate = tx
+        .query_row(
+            "SELECT id FROM groups
+             WHERE id <> ?1 AND name = ?2 AND deleted_at IS NULL
+             LIMIT 1",
+            params![&input.id, &name],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    if duplicate.is_some() {
+        return Err("A group with this name already exists".to_string());
+    }
+    let display_order = input.display_order.unwrap_or(current.1);
+    let now = next_timestamp(current.3)?;
+    tx.execute(
+        "UPDATE groups SET name = ?1, display_order = ?2, updated_at = ?3,
+                deleted_at = NULL WHERE id = ?4",
+        params![name, display_order, now, &input.id],
+    )
+    .map_err(|error| error.to_string())?;
+    tx.commit().map_err(|error| error.to_string())?;
 
-    Ok(group)
+    conn.query_row(
+        "SELECT id, name, display_order, created_at, updated_at, deleted_at
+         FROM groups WHERE id = ?1 AND deleted_at IS NULL",
+        [&input.id],
+        |row| {
+            Ok(Group {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                display_order: row.get::<_, i32>(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+                deleted_at: row.get(5)?,
+            })
+        },
+    )
+    .map_err(|error| error.to_string())
+}
+
+/// Atomically persist the complete active-group order.  Updating two rows in
+/// separate IPC calls can otherwise leave a half-swapped order after a crash
+/// or a competing sync.
+#[tauri::command]
+pub async fn reorder_groups(
+    group_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<Group>, String> {
+    let _vault_guard = state.vault_lock.lock().await;
+    if group_ids.len() > 50_000 {
+        return Err("Too many groups".to_string());
+    }
+    for group_id in &group_ids {
+        validate_entity_id("Group", group_id)?;
+    }
+    let mut seen = std::collections::HashSet::new();
+    if !group_ids.iter().all(|id| seen.insert(id)) {
+        return Err("Duplicate group ID".to_string());
+    }
+
+    let conn = state.db.get_connection();
+    let mut conn = conn.lock();
+    let now = next_database_timestamp(&conn)?;
+    let tx = conn.transaction().map_err(|error| error.to_string())?;
+    let active_count = tx
+        .query_row(
+            "SELECT COUNT(*) FROM groups WHERE deleted_at IS NULL",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let active_count =
+        usize::try_from(active_count).map_err(|_| "Active group count is invalid".to_string())?;
+    if active_count != group_ids.len() {
+        return Err("Group order must include every active group exactly once".to_string());
+    }
+    for (display_order, group_id) in group_ids.iter().enumerate() {
+        let changed = tx
+            .execute(
+                "UPDATE groups SET display_order = ?1,
+                        updated_at = MAX(
+                            CASE WHEN updated_at < 9223372036854775807 THEN updated_at + 1 ELSE updated_at END,
+                            ?2)
+                 WHERE id = ?3 AND deleted_at IS NULL",
+                params![display_order as i64, now, group_id],
+            )
+            .map_err(|error| error.to_string())?;
+        if changed != 1 {
+            return Err(format!("Group not found: {group_id}"));
+        }
+    }
+    tx.commit().map_err(|error| error.to_string())?;
+
+    let mut statement = conn
+        .prepare(
+            "SELECT id, name, display_order, created_at, updated_at, deleted_at
+             FROM groups WHERE deleted_at IS NULL ORDER BY display_order, id",
+        )
+        .map_err(|error| error.to_string())?;
+    let groups = statement
+        .query_map([], |row| {
+            Ok(Group {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                display_order: row.get::<_, i32>(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+                deleted_at: row.get(5)?,
+            })
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(groups)
 }
 
 #[tauri::command]
 pub async fn delete_group(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    validate_entity_id("Group", &id)?;
+    let _vault_guard = state.vault_lock.lock().await;
     let conn = state.db.get_connection();
     let mut conn = conn.lock();
-    let now = chrono::Utc::now().timestamp();
-
+    let global_now = next_database_timestamp(&conn)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    let previous_updated = tx
+        .query_row(
+            "SELECT updated_at FROM groups WHERE id = ?1 AND deleted_at IS NULL",
+            [&id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some(previous_updated) = previous_updated else {
+        tx.commit().map_err(|error| error.to_string())?;
+        return Ok(());
+    };
+    let now = global_now.max(next_timestamp(previous_updated)?);
 
     // 将该分组下的所有待办的 group_id 设为 NULL
     tx.execute(
-        "UPDATE notes SET group_id = NULL, updated_at = ?1 WHERE group_id = ?2",
+        "UPDATE notes SET group_id = NULL, updated_at = MAX(
+             CASE WHEN updated_at < 9223372036854775807 THEN updated_at + 1 ELSE updated_at END,
+             ?1)
+         WHERE group_id = ?2",
         params![now, &id],
     )
     .map_err(|e| e.to_string())?;
+    deduplicate_blank_drafts(&tx).map_err(|error| error.to_string())?;
 
     // 保留删除墓碑，便于其他设备增量同步删除动作。
     tx.execute(
