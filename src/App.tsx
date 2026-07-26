@@ -12,7 +12,7 @@ import { getAllNotes, createNote, updateNote, deleteNote } from "./features/note
 import { getAllGroups, createGroup, updateGroup, reorderGroups, deleteGroup } from "./features/notes/hooks/useGroups";
 import type { Note, Group } from "./features/notes/types";
 import { Window } from "@tauri-apps/api/window";
-import { WebDAVSettings } from "./features/sync/WebDAVSettings";
+import { SettingsPage } from "./features/settings/SettingsPage";
 import { syncNotes, cancelSync } from "./features/sync/api";
 import { formatTimestamp, calculateDuration } from "./features/notes/utils/timeFormat";
 import { SimpleMarkdown } from "./features/notes/components/SimpleMarkdown";
@@ -39,9 +39,11 @@ const openSettingsWindow = async () => {
     // 创建新窗口
     const settingsWindow = new WebviewWindow("settings", {
       url: "/#settings",
-      title: "WebDAV 同步设置",
-      width: 700,
-      height: 600,
+      title: "LightTodo 设置",
+      width: 760,
+      height: 640,
+      minWidth: 640,
+      minHeight: 520,
       resizable: true,
       center: true,
       decorations: true,
@@ -1921,9 +1923,7 @@ function App() {
   return (
     <>
       {showSettings ? (
-        <div className="h-screen flex flex-col bg-white">
-          <WebDAVSettings />
-        </div>
+        <SettingsPage />
       ) : (
         <div className="h-screen w-screen flex flex-col bg-white rounded-lg shadow-2xl">
           {/* 可拖拽的顶部区域 */}

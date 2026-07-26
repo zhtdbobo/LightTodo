@@ -2,6 +2,29 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)规范。
 
+## [0.2.5] - 2026-07-26
+
+### 主要功能
+
+- 设置中心：将原 WebDAV 设置窗口升级为包含“同步”和“关于”的统一设置界面
+- 关于页面：展示应用图标、当前版本、产品特点、开源许可与项目主页
+- 检查更新：读取 GitHub 最新 Release，与当前版本自动比较并提示可用更新
+- 代理下载：根据最新版本动态生成 `gh-proxy.com` 安装包地址，并交由系统默认浏览器下载
+
+### 修复与改进
+
+- 修正项目主页的 GitHub 用户名，并使用 Tauri opener 可靠打开外部链接
+- 限制外链权限范围，仅允许项目主页及 LightTodo Release 安装包下载地址
+- 优化 WebDAV 设置页标题、说明、间距以及窄窗口下的开关布局
+- 增加设置页切换、项目主页打开、发现新版本和已是最新版的自动化测试
+
+### 发布说明
+
+- `v0.2.5` 为 LightTodo 的设置与应用更新体验版本
+- Windows x64 安装包可从 GitHub Release 下载，应用内下载使用代理加速地址
+
+---
+
 ## [0.2.4] - 2026-07-25
 
 ### 主要功能
@@ -91,4 +114,5 @@
 [0.2.2]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.2
 [0.2.3]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.3
 [0.2.4]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.4
-[0.1.0]: https://github.com/jaridli/LightTodo/releases/tag/v0.1.0
+[0.2.5]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.5
+[0.1.0]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.1.0

@@ -55,7 +55,7 @@
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/jaridli/LightTodo.git
+git clone https://github.com/zhtdbobo/LightTodo.git
 cd LightTodo
 
 # 2. 安装前端依赖
@@ -462,8 +462,8 @@ LightTodo/
 
 ## 💬 联系方式
 
-- **Issues**: [GitHub Issues](https://github.com/jaridli/LightTodo/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/jaridli/LightTodo/discussions)
+- **Issues**: [GitHub Issues](https://github.com/zhtdbobo/LightTodo/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/zhtdbobo/LightTodo/discussions)
 
 ## 🙏 致谢
 

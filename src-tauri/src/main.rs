@@ -40,6 +40,7 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(AppState {
             db: Arc::new(db),
@@ -102,8 +103,9 @@ fn main() {
                                 "settings",
                                 tauri::WebviewUrl::App("/#settings".into()),
                             )
-                            .title("WebDAV 同步设置")
-                            .inner_size(700.0, 600.0)
+                            .title("LightTodo 设置")
+                            .inner_size(760.0, 640.0)
+                            .min_inner_size(640.0, 520.0)
                             .resizable(true)
                             .center()
                             .build();
