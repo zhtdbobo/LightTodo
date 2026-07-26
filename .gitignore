@@ -6,7 +6,25 @@ node_modules/
 .pnpm-store/
 dist/
 
+# Test output
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# Local environment and tool settings
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+
+# Build tool caches
+.vite/
+*.tsbuildinfo
+.eslintcache
+
 # Logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
