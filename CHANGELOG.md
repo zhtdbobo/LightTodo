@@ -2,6 +2,26 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)规范。
 
+## [0.2.7] - 2026-07-27
+
+### 主要功能
+
+- 应用内更新：发现新版本后直接在 LightTodo 内下载、显示进度、安装并重启，不再跳转浏览器
+- 安全校验：更新安装包使用 Tauri updater 签名验证，避免安装被篡改的文件
+
+### 修复与改进
+
+- 增加 tag 触发的 GitHub Actions 发布流程，自动生成签名文件和 `latest.json`
+- 更新发布规范，并覆盖应用内下载、安装和重启流程的自动化测试
+
+### 发布说明
+
+- `v0.2.7` 为 LightTodo 的应用内自动更新版本
+- 本版本需要从现有版本手动安装一次；从 `v0.2.7` 开始，后续版本可直接在应用内完成更新
+- 本版本未改变数据库结构和同步协议
+
+---
+
 ## [0.2.6] - 2026-07-27
 
 ### 主要功能
@@ -138,4 +158,5 @@
 [0.2.4]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.4
 [0.2.5]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.5
 [0.2.6]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.6
+[0.2.7]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.7
 [0.1.0]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.1.0

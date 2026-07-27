@@ -79,7 +79,11 @@ Release Note 统一使用中文，并按下面结构编写：
 LightTodo 当前默认以 Windows `NSIS` 安装包作为主发布文件，因此每次 release 至少要确保：
 
 - `LightTodo_<version>_x64-setup.exe`
+- `LightTodo_<version>_x64-setup.exe.sig`
+- `latest.json`
 - Release Note 已更新为中文
+
+其中签名文件和 `latest.json` 供应用内自动更新使用。缺少任意一项时，旧版本仍可运行，但无法完成应用内更新。
 
 如果将来开启更多平台，再补充对应平台的安装包。
 
@@ -94,7 +98,21 @@ LightTodo 当前默认以 Windows `NSIS` 安装包作为主发布文件，因此
 
 ### 4.2 构建流程
 
-Windows 发布一般使用：
+首次启用自动更新时，将本机 `src-tauri/.updater/lighttodo.key` 的完整内容保存为仓库 Secret：
+
+- `TAURI_SIGNING_PRIVATE_KEY`
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（内容见本机 `src-tauri/.updater/lighttodo.key.password`）
+
+私钥不得提交到 Git，也不能丢失；后续版本必须始终使用同一把密钥签名。
+
+推荐推送 `v<version>` tag，由 `.github/workflows/release.yml` 自动构建签名更新包和草稿 Release：
+
+```bash
+git tag v<version>
+git push origin v<version>
+```
+
+本地验证 Windows 构建时，需要先设置签名私钥环境变量，再运行：
 
 ```bash
 pnpm run tauri build
@@ -108,11 +126,11 @@ src-tauri/target/release/bundle/nsis/LightTodo_<version>_x64-setup.exe
 
 ### 4.3 发布流程
 
-1. 给当前版本打 tag
-2. 创建 GitHub Release
-3. 上传安装包
-4. 检查 Release 页面资产是否正确
-5. 必要时修正 Release Note 或补传文件
+1. 给当前版本打 tag 并推送
+2. 等待 GitHub Actions 创建草稿 Release
+3. 检查安装包、签名文件和 `latest.json` 是否齐全
+4. 完善 Release Note 后发布草稿
+5. 发布后确认 `latest.json` 可以访问
 
 ## 5. 版本发布命名规范
 
@@ -140,6 +158,7 @@ src-tauri/target/release/bundle/nsis/LightTodo_<version>_x64-setup.exe
 - [ ] Release Note 为中文
 - [ ] `## 主要功能` 和 `## 发布说明` 结构完整
 - [ ] Windows `NSIS` 安装包已上传
+- [ ] 签名文件和 `latest.json` 已上传
 - [ ] Release 页面没有多余旧资产
 - [ ] 标题、正文、资产命名一致
 
@@ -149,9 +168,9 @@ src-tauri/target/release/bundle/nsis/LightTodo_<version>_x64-setup.exe
 
 1. 编写 Release Note
 2. 构建安装包
-3. 上传 `exe`
-4. 创建/更新 GitHub Release
-5. 检查资产是否完整
+3. 推送版本 tag，等待 Actions 完成签名构建
+4. 完善并发布 GitHub Release 草稿
+5. 检查安装包与自动更新资产是否完整
 
 ---
 

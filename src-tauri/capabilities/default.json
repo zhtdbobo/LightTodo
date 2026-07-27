@@ -17,14 +17,13 @@
     "core:webview:allow-get-all-webviews",
     "core:event:allow-emit",
     "core:event:allow-listen",
+    "process:allow-restart",
+    "updater:default",
     {
       "identifier": "opener:allow-open-url",
       "allow": [
         {
           "url": "https://github.com/zhtdbobo/LightTodo"
-        },
-        {
-          "url": "https://gh-proxy.com/github.com/zhtdbobo/LightTodo/releases/download/v*/LightTodo_*_x64-setup.exe"
         }
       ]
     }

@@ -1,6 +1,8 @@
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
 import packageInfo from "../../../package.json";
 import { render, screen } from "../../test-utils";
 import { SettingsPage } from "./SettingsPage";
@@ -13,13 +15,17 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
 }));
 
+vi.mock("@tauri-apps/plugin-process", () => ({
+  relaunch: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/plugin-updater", () => ({
+  check: vi.fn(),
+}));
+
 describe("SettingsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
   });
 
   it("默认展示同步界面，并可切换到关于界面", async () => {
@@ -42,46 +48,51 @@ describe("SettingsPage", () => {
     expect(openUrl).toHaveBeenCalledWith("https://github.com/zhtdbobo/LightTodo");
   });
 
-  it("检查到新版本后使用代理地址下载对应版本", async () => {
+  it("检查到新版本后在应用内下载、安装并重启", async () => {
     const user = userEvent.setup();
     const [major, minor, patch] = packageInfo.version.split(".").map(Number);
     const latestVersion = `${major}.${minor}.${patch + 1}`;
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ tag_name: `v${latestVersion}` }),
+    let finishDownload = () => {};
+    const downloadAndInstall = vi.fn(async (onEvent?: (event: DownloadEvent) => void) => {
+      onEvent?.({ event: "Started", data: { contentLength: 100 } });
+      onEvent?.({ event: "Progress", data: { chunkLength: 40 } });
+      await new Promise<void>((resolve) => {
+        finishDownload = resolve;
+      });
+      onEvent?.({ event: "Finished" });
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.mocked(check).mockResolvedValue({
+      version: latestVersion,
+      downloadAndInstall,
+    } as unknown as Update);
     render(<SettingsPage />);
 
     await user.click(screen.getByRole("tab", { name: /关于/ }));
     await user.click(screen.getByRole("button", { name: "检查更新" }));
 
     expect(await screen.findByText(`发现新版本 v${latestVersion}`)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: `下载 v${latestVersion}` }));
+    await user.click(screen.getByRole("button", { name: `下载并安装 v${latestVersion}` }));
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://api.github.com/repos/zhtdbobo/LightTodo/releases/latest",
-      expect.objectContaining({ cache: "no-store" }),
-    );
-    expect(openUrl).toHaveBeenCalledWith(
-      `https://gh-proxy.com/github.com/zhtdbobo/LightTodo/releases/download/v${latestVersion}/LightTodo_${latestVersion}_x64-setup.exe`,
-    );
+    expect(await screen.findByText("正在下载 40%")).toBeInTheDocument();
+    expect(check).toHaveBeenCalledWith({ timeout: 30_000 });
+    expect(downloadAndInstall).toHaveBeenCalledOnce();
+    expect(openUrl).not.toHaveBeenCalled();
+
+    finishDownload();
+
+    expect(await screen.findByText(`正在安装 v${latestVersion}…`)).toBeInTheDocument();
+    expect(relaunch).toHaveBeenCalledOnce();
   });
 
   it("没有新版本时提示当前已是最新版", async () => {
     const user = userEvent.setup();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ tag_name: `v${packageInfo.version}` }),
-    }));
+    vi.mocked(check).mockResolvedValue(null);
     render(<SettingsPage />);
 
     await user.click(screen.getByRole("tab", { name: /关于/ }));
     await user.click(screen.getByRole("button", { name: "检查更新" }));
 
     expect(await screen.findByText(`当前已是最新版本 v${packageInfo.version}`)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /下载 v/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /下载并安装 v/ })).not.toBeInTheDocument();
   });
 });

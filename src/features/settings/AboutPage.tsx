@@ -1,39 +1,24 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import { useState, type MouseEvent } from "react";
 import appIcon from "../../../src-tauri/icons/icon-source.svg";
 import packageInfo from "../../../package.json";
 
 const repositoryUrl = "https://github.com/zhtdbobo/LightTodo";
-const latestReleaseUrl = "https://api.github.com/repos/zhtdbobo/LightTodo/releases/latest";
-const downloadBaseUrl = "https://gh-proxy.com/github.com/zhtdbobo/LightTodo/releases/download";
 
 type UpdateStatus =
   | { state: "idle" }
   | { state: "checking" }
   | { state: "latest"; version: string }
-  | { state: "available"; version: string; downloadUrl: string }
+  | { state: "available"; version: string; update: Update }
+  | { state: "downloading"; version: string; downloadedBytes: number; totalBytes?: number }
+  | { state: "installing"; version: string }
   | { state: "error"; message: string };
 
-function normalizeVersion(tagName: unknown) {
-  if (typeof tagName !== "string") return null;
-  return tagName.match(/^v?(\d+\.\d+\.\d+)$/)?.[1] ?? null;
-}
-
-function isNewerVersion(latestVersion: string, currentVersion: string) {
-  const latest = latestVersion.split(".").map(Number);
-  const current = currentVersion.split(".").map(Number);
-
-  for (let index = 0; index < Math.max(latest.length, current.length); index += 1) {
-    const latestPart = latest[index] ?? 0;
-    const currentPart = current[index] ?? 0;
-    if (latestPart !== currentPart) return latestPart > currentPart;
-  }
-
-  return false;
-}
-
-function createDownloadUrl(version: string) {
-  return `${downloadBaseUrl}/v${version}/LightTodo_${version}_x64-setup.exe`;
+function formatDownloadProgress(downloadedBytes: number, totalBytes?: number) {
+  if (!totalBytes) return "正在下载更新…";
+  return `正在下载 ${Math.min(100, Math.round((downloadedBytes / totalBytes) * 100))}%`;
 }
 
 export function AboutPage() {
@@ -56,29 +41,15 @@ export function AboutPage() {
     setUpdateStatus({ state: "checking" });
 
     try {
-      const response = await fetch(latestReleaseUrl, {
-        cache: "no-store",
-        headers: { Accept: "application/vnd.github+json" },
-      });
-
-      if (!response.ok) {
-        throw new Error(`GitHub API 返回 ${response.status}`);
-      }
-
-      const release = (await response.json()) as { tag_name?: unknown };
-      const latestVersion = normalizeVersion(release.tag_name);
-      if (!latestVersion) {
-        throw new Error("最新 Release 的版本号格式无效");
-      }
-
-      if (isNewerVersion(latestVersion, packageInfo.version)) {
+      const update = await check({ timeout: 30_000 });
+      if (update) {
         setUpdateStatus({
           state: "available",
-          version: latestVersion,
-          downloadUrl: createDownloadUrl(latestVersion),
+          version: update.version,
+          update,
         });
       } else {
-        setUpdateStatus({ state: "latest", version: latestVersion });
+        setUpdateStatus({ state: "latest", version: packageInfo.version });
       }
     } catch (error) {
       console.error("检查更新失败", error);
@@ -86,14 +57,31 @@ export function AboutPage() {
     }
   };
 
-  const handleDownloadUpdate = async () => {
+  const handleInstallUpdate = async () => {
     if (updateStatus.state !== "available") return;
 
+    const { update, version } = updateStatus;
+    let downloadedBytes = 0;
+    let totalBytes: number | undefined;
+
     try {
-      await openUrl(updateStatus.downloadUrl);
+      setUpdateStatus({ state: "downloading", version, downloadedBytes: 0 });
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          downloadedBytes = 0;
+          totalBytes = event.data.contentLength;
+          setUpdateStatus({ state: "downloading", version, downloadedBytes, totalBytes });
+        } else if (event.event === "Progress") {
+          downloadedBytes += event.data.chunkLength;
+          setUpdateStatus({ state: "downloading", version, downloadedBytes, totalBytes });
+        } else {
+          setUpdateStatus({ state: "installing", version });
+        }
+      });
+      await relaunch();
     } catch (error) {
-      console.error("打开更新下载地址失败", error);
-      setUpdateStatus({ state: "error", message: "无法打开下载地址，请稍后重试。" });
+      console.error("安装更新失败", error);
+      setUpdateStatus({ state: "error", message: "更新安装失败，请确认网络连接后重试。" });
     }
   };
 
@@ -176,6 +164,16 @@ export function AboutPage() {
                 发现新版本 v{updateStatus.version}
               </p>
             )}
+            {updateStatus.state === "downloading" && (
+              <p role="status" className="mt-1 text-xs text-cyan-600">
+                {formatDownloadProgress(updateStatus.downloadedBytes, updateStatus.totalBytes)}
+              </p>
+            )}
+            {updateStatus.state === "installing" && (
+              <p role="status" className="mt-1 text-xs text-cyan-600">
+                正在安装 v{updateStatus.version}…
+              </p>
+            )}
             {updateStatus.state === "error" && (
               <p role="alert" className="mt-1 text-xs text-red-600">
                 {updateStatus.message}
@@ -186,10 +184,18 @@ export function AboutPage() {
           {updateStatus.state === "available" ? (
             <button
               type="button"
-              onClick={handleDownloadUpdate}
+              onClick={handleInstallUpdate}
               className="flex-shrink-0 rounded-lg bg-cyan-600 px-3 py-1.5 font-medium text-white transition-colors hover:bg-cyan-700"
             >
-              下载 v{updateStatus.version}
+              下载并安装 v{updateStatus.version}
+            </button>
+          ) : updateStatus.state === "downloading" || updateStatus.state === "installing" ? (
+            <button
+              type="button"
+              disabled
+              className="flex-shrink-0 rounded-lg bg-cyan-600 px-3 py-1.5 font-medium text-white opacity-60"
+            >
+              {updateStatus.state === "downloading" ? "下载中" : "安装中"}
             </button>
           ) : (
             <button

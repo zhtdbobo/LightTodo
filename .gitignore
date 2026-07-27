@@ -17,6 +17,8 @@ blob-report/
 .env.*
 !.env.example
 .claude/settings.local.json
+src-tauri/.updater/*.key
+src-tauri/.updater/*.password
 
 # Build tool caches
 .vite/

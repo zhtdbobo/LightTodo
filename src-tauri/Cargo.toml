@@ -1,6 +1,6 @@
 [package]
 name = "lighttodo"
-version = "0.2.6"
+version = "0.2.7"
 description = "A lightweight note-taking app with WebDAV sync"
 authors = ["zhtdbobo"]
 edition = "2021"
@@ -27,6 +27,8 @@ sha2 = "0.10"
 ring = "0.17.14"
 windows = { version = "0.61.3", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
 tauri-plugin-opener = "2"
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
 
 [features]
 default = ["custom-protocol"]
