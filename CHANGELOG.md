@@ -2,6 +2,28 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)规范。
 
+## [0.2.6] - 2026-07-27
+
+### 主要功能
+
+- 连续录入：在已有待办中按 Enter 创建下一条时，自动将光标移入新待办
+- 截止时间：小时和分钟支持清空后直接键盘输入，并在失焦或按 Enter 时提交
+- 空白草稿：未输入内容的待办在失焦后立即移除，后台删除失败时自动恢复
+- 分组视觉：统一自定义分组与今日、密码、已完成分组的标题缩进
+
+### 修复与改进
+
+- 保留异步创建期间的焦点保护，用户主动切换到其他控件后不再抢回焦点
+- 增加焦点交接和截止时间键盘输入的自动化测试
+
+### 发布说明
+
+- `v0.2.6` 为 LightTodo 的待办录入与编辑体验修复版本
+- 本版本在 `v0.2.5` 基础上完善连续新建、空白草稿清理、截止时间输入和分组对齐
+- 本版本未改变数据库结构和同步协议
+
+---
+
 ## [0.2.5] - 2026-07-26
 
 ### 主要功能
@@ -115,4 +137,5 @@
 [0.2.3]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.3
 [0.2.4]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.4
 [0.2.5]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.5
+[0.2.6]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.6
 [0.1.0]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.1.0

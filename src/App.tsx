@@ -3,7 +3,6 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
-  type FocusEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
@@ -15,8 +14,10 @@ import { Window } from "@tauri-apps/api/window";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { syncNotes, cancelSync } from "./features/sync/api";
 import { formatTimestamp, calculateDuration } from "./features/notes/utils/timeFormat";
+import { DeadlineTimeInput } from "./features/notes/components/DeadlineTimeInput";
 import { SimpleMarkdown } from "./features/notes/components/SimpleMarkdown";
 import { belongsToTodayGroup, fromDateTimeLocalValue, getDeadlineStatus, toDateTimeLocalValue } from "./features/notes/utils/deadline";
+import { canClaimNoteFocus } from "./features/notes/utils/focus";
 
 // 仅在开发模式下导入 react-grab
 const initReactGrab = import.meta.env.DEV
@@ -70,8 +71,6 @@ const groupNameCollator = new Intl.Collator("zh-CN", {
 });
 
 const isEnglishGroupName = (name: string) => /^[A-Za-z]/.test(name.trimStart());
-
-const noteCreateButtonSelector = "[data-note-create-button]";
 
 const preserveBlankDraftOnCreateMouseDown = (event: ReactMouseEvent<HTMLButtonElement>) => {
   const activeElement = document.activeElement;
@@ -192,7 +191,7 @@ const GroupTitle = ({
         <button
           type="button"
           onClick={onToggle}
-          className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-[9px] text-gray-400 hover:text-gray-600"
+          className="inline-flex flex-shrink-0 items-center justify-center text-[9px] text-gray-400 hover:text-gray-600"
           aria-label={isExpanded ? `折叠分组 ${group.name}` : `展开分组 ${group.name}`}
           aria-expanded={isExpanded}
         >
@@ -813,20 +812,17 @@ function App() {
     }
   };
 
-  const focusNoteTextarea = (noteId: string, delay = 100) => {
+  const focusNoteTextarea = (
+    noteId: string,
+    delay = 100,
+    focusOrigin?: Element | null
+  ) => {
     const focus = () => {
       const textarea = document.querySelector(
         noteSelector(noteId)
       ) as HTMLTextAreaElement | null;
       if (textarea) {
-        const activeElement = document.activeElement;
-        const canClaimFocus =
-          activeElement === null
-          || activeElement === document.body
-          || activeElement === textarea
-          || (activeElement instanceof HTMLElement
-            && Boolean(activeElement.closest(noteCreateButtonSelector)));
-        if (!canClaimFocus) return;
+        if (!canClaimNoteFocus(textarea, focusOrigin)) return;
         if (document.activeElement !== textarea) {
           textarea.focus({ preventScroll: true });
         }
@@ -856,7 +852,8 @@ function App() {
   // 创建新便签
   const handleCreateNote = async (
     forceCreate: boolean = false,
-    options: Partial<Pick<Note, "groupId" | "deadline">> = {}
+    options: Partial<Pick<Note, "groupId" | "deadline">> = {},
+    focusOrigin: Element | null = document.activeElement
   ) => {
     const creationKey = getNoteCreationKey(options);
 
@@ -887,7 +884,7 @@ function App() {
           (n.groupId ?? null) === (options.groupId ?? null)
       );
       if (emptyNote) {
-        focusNoteTextarea(emptyNote.id, 50);
+        focusNoteTextarea(emptyNote.id, 50, focusOrigin);
         return;
       }
 
@@ -907,7 +904,7 @@ function App() {
       });
       addNote(newNote);
 
-      focusNoteTextarea(newNote.id);
+      focusNoteTextarea(newNote.id, 100, focusOrigin);
     } catch (error) {
       console.error("Failed to create note:", error);
     } finally {
@@ -983,13 +980,25 @@ function App() {
   };
 
   // 删除便签
-  const handleDelete = async (note: Note) => {
+  const handleDelete = async (note: Note, optimistic = false) => {
     markNotesMutation(note.id);
+    if (optimistic) {
+      removeNote(note.id);
+    }
+
     try {
       await deleteNote(note.id);
-      removeNote(note.id);
+      if (!optimistic) {
+        removeNote(note.id);
+      }
     } catch (error) {
       locallyDeletedNoteIdsRef.current.delete(note.id);
+      if (
+        optimistic
+        && !useNotesStore.getState().notes.some((item) => item.id === note.id)
+      ) {
+        addNote(note);
+      }
       console.error("Failed to delete:", error);
     }
   };
@@ -1173,29 +1182,19 @@ function App() {
       setIsEditing(true);
     };
 
-    const handleLocalBlur = async (event?: FocusEvent<HTMLTextAreaElement>) => {
+    const handleLocalBlur = async () => {
       const editSession = editSessionRef.current;
-      const relatedTarget = event?.relatedTarget;
-      const isMovingToNoteCreateControl =
-        relatedTarget instanceof HTMLElement
-        && Boolean(relatedTarget.closest(noteCreateButtonSelector));
 
       if (isPasswordNote(note)) {
         const nextTitle = buildPasswordTitleMarkdown(localTitle, localPassword);
         const isBlankDraft = !localTitle.trim() && !localPassword.trim();
-        if (isBlankDraft && isMovingToNoteCreateControl) {
+        if (editSessionRef.current === editSession && isBlankDraft) {
+          await handleDelete(note, true);
           return;
         }
         if (nextTitle !== note.title) {
           const saved = await handleEditTitle(note, nextTitle);
           if (!saved) return;
-        }
-        if (
-          editSessionRef.current === editSession
-          && !localTitle.trim()
-          && !localPassword.trim()
-        ) {
-          await handleDelete(note);
         }
         if (editSessionRef.current === editSession) {
           setIsEditing(false);
@@ -1204,17 +1203,13 @@ function App() {
       }
 
       // 失焦时才保存到数据库
-      if (!localTitle.trim() && isMovingToNoteCreateControl) {
+      if (editSessionRef.current === editSession && !localTitle.trim()) {
+        await handleDelete(note, true);
         return;
       }
       if (localTitle.trim() !== note.title) {
         const saved = await handleEditTitle(note, localTitle);
         if (!saved) return;
-      }
-
-      // 如果标题为空，删除这条待办
-      if (editSessionRef.current === editSession && !localTitle.trim()) {
-        await handleDelete(note);
       }
 
       if (editSessionRef.current === editSession) {
@@ -1284,8 +1279,8 @@ function App() {
     };
 
     const setDeadlineTimePart = (part: "hour" | "minute", value: string) => {
+      if (!/^\d{1,2}$/.test(value)) return;
       const parsed = Number(value);
-      if (!Number.isFinite(parsed)) return;
 
       const next = getDeadlineDraftDate();
       if (part === "hour") {
@@ -1476,6 +1471,7 @@ function App() {
               if (e.key === 'Enter' && !e.shiftKey && !composingRef.current) {
                 e.preventDefault();
 
+                const focusOrigin = e.currentTarget;
                 const currentContent = localTitle.trim();
 
                 // 如果当前待办为空，强制创建新待办
@@ -1483,7 +1479,7 @@ function App() {
                   await handleCreateNote(true, {
                     groupId: note.groupId,
                     deadline: note.deadline,
-                  });
+                  }, focusOrigin);
                   return;
                 }
 
@@ -1497,7 +1493,7 @@ function App() {
                 await handleCreateNote(true, {
                   groupId: note.groupId,
                   deadline: note.deadline,
-                });
+                }, focusOrigin);
               }
             }}
             onClick={() => {
@@ -1707,24 +1703,10 @@ function App() {
                             })}
                           </div>
                           <div className="mt-2 flex items-center gap-1">
-                            <input
-                              aria-label="小时"
-                              type="number"
-                              min={0}
-                              max={23}
-                              value={deadlineHour}
-                              onChange={(event) => setDeadlineTimePart("hour", event.target.value)}
-                              className="w-12 border border-gray-200 rounded px-1 py-0.5 text-center text-gray-700"
-                            />
-                            <span className="text-gray-400">:</span>
-                            <input
-                              aria-label="分钟"
-                              type="number"
-                              min={0}
-                              max={59}
-                              value={deadlineMinute}
-                              onChange={(event) => setDeadlineTimePart("minute", event.target.value)}
-                              className="w-12 border border-gray-200 rounded px-1 py-0.5 text-center text-gray-700"
+                            <DeadlineTimeInput
+                              hour={deadlineHour}
+                              minute={deadlineMinute}
+                              onCommit={setDeadlineTimePart}
                             />
                             <div className="flex-1" />
                             {(note.deadline != null || deadlineDraftValue) && (
