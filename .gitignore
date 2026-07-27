@@ -16,7 +16,7 @@ blob-report/
 .env
 .env.*
 !.env.example
-.claude/settings.local.json
+.claude/
 src-tauri/.updater/*.key
 src-tauri/.updater/*.password
 
