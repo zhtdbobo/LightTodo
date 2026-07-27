@@ -132,6 +132,8 @@ src-tauri/target/release/bundle/nsis/LightTodo_<version>_x64-setup.exe
 4. 完善 Release Note 后发布草稿
 5. 发布后确认 `latest.json` 可以访问
 
+Release 工作流会自动将 `latest.json` 中的安装包地址改为 `gh-proxy.com` 镜像，并保留客户端中的 GitHub 直连清单地址作为回退。发布后需要同时检查镜像清单和镜像安装包可访问。
+
 ## 5. 版本发布命名规范
 
 - 版本号使用语义化版本号，如 `v0.1.0`、`v0.2.0`

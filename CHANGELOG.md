@@ -2,6 +2,26 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)规范。
 
+## [0.2.8] - 2026-07-28
+
+### 主要功能
+
+- 镜像更新：检查更新和下载安装包时优先使用 `gh-proxy.com`，GitHub 直连作为备用
+
+### 修复与改进
+
+- 修复部分网络环境下 GitHub Release 连接超时，导致应用内检查更新失败的问题
+- 发布工作流自动从 CHANGELOG 提取版本说明，并将 `latest.json` 的安装包 URL 改为镜像地址
+- 检查更新失败时显示更准确的更新服务器连接提示
+
+### 发布说明
+
+- `v0.2.8` 为 LightTodo 的应用内更新网络修复版本
+- `v0.2.7` 无法连接 GitHub 的用户需要手动安装本版本；后续版本可通过镜像在应用内更新
+- 本版本未改变数据库结构和同步协议
+
+---
+
 ## [0.2.7] - 2026-07-27
 
 ### 主要功能
@@ -159,4 +179,5 @@
 [0.2.5]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.5
 [0.2.6]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.6
 [0.2.7]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.7
+[0.2.8]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.8
 [0.1.0]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.1.0

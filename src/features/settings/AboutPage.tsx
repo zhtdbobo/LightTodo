@@ -53,7 +53,7 @@ export function AboutPage() {
       }
     } catch (error) {
       console.error("检查更新失败", error);
-      setUpdateStatus({ state: "error", message: "检查更新失败，请确认网络连接后重试。" });
+      setUpdateStatus({ state: "error", message: "无法连接更新服务器，请确认网络连接后重试。" });
     }
   };
 

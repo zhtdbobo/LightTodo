@@ -28,6 +28,21 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Read release notes from changelog
+        id: release_notes
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw -Encoding utf8 | ConvertFrom-Json).version
+          $changelog = Get-Content CHANGELOG.md -Raw -Encoding utf8
+          $escapedVersion = [regex]::Escape($version)
+          $match = [regex]::Match($changelog, "(?ms)^## \[$escapedVersion\].*?\r?\n(.*?)(?=^---\s*$)")
+          if (-not $match.Success) {
+            throw "CHANGELOG.md does not contain release notes for $version"
+          }
+          "body<<LIGHTTODO_RELEASE_NOTES" >> $env:GITHUB_OUTPUT
+          $match.Groups[1].Value.Trim() >> $env:GITHUB_OUTPUT
+          "LIGHTTODO_RELEASE_NOTES" >> $env:GITHUB_OUTPUT
+
       - name: Build signed updater and draft release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -37,7 +52,27 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: v__VERSION__
-          releaseBody: 请按 CHANGELOG.md 补充本版本的主要功能与发布说明。
+          releaseBody: ${{ steps.release_notes.outputs.body }}
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
+
+      - name: Route updater downloads through gh-proxy.com
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content package.json -Raw -Encoding utf8 | ConvertFrom-Json).version
+          $tag = "v$version"
+          gh release download $tag --pattern latest.json --output latest.json --clobber
+          $manifest = Get-Content latest.json -Raw -Encoding utf8 | ConvertFrom-Json
+          foreach ($platform in $manifest.platforms.PSObject.Properties) {
+            $platform.Value.url = $platform.Value.url -replace '^https://github\.com/', 'https://gh-proxy.com/github.com/'
+          }
+          $json = $manifest | ConvertTo-Json -Depth 10
+          [System.IO.File]::WriteAllText(
+            (Join-Path $PWD "latest.json"),
+            $json,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+          gh release upload $tag latest.json --clobber
