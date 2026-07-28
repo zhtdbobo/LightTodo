@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -83,6 +84,8 @@ jobs:
   build-macos:
     needs: prepare
     runs-on: macos-latest
+    env:
+      APPLE_SIGNING_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -102,7 +105,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build universal macOS app and DMG
+      - name: Build signed universal macOS app and DMG
+        if: env.APPLE_SIGNING_ENABLED == 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -114,6 +118,22 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: v__VERSION__
+          releaseName: v__VERSION__
+          releaseBody: ${{ needs.prepare.outputs.release_body }}
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: false
+          args: --target universal-apple-darwin --bundles app,dmg
+
+      - name: Build unsigned universal macOS app and DMG
+        if: env.APPLE_SIGNING_ENABLED != 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
           releaseName: v__VERSION__
