@@ -373,6 +373,13 @@ function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [showSyncMenu, setShowSyncMenu] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [isInitialDataLoading, setIsInitialDataLoading] = useState(true);
+  const [groupDeleteConfirm, setGroupDeleteConfirm] = useState<{
+    groupId: string;
+    groupName: string;
+    noteCount: number;
+  } | null>(null);
+  const [isDeletingGroup, setIsDeletingGroup] = useState(false);
   const [expandedActiveGroups, setExpandedActiveGroups] = useState<Set<string>>(
     () => new Set(["active-today"])
   );
@@ -420,6 +427,19 @@ function App() {
       locallyDeletedGroupIdsRef.current.add(deletedId);
     }
   };
+
+  useEffect(() => {
+    if (!groupDeleteConfirm) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !isDeletingGroup) {
+        setGroupDeleteConfirm(null);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [groupDeleteConfirm, isDeletingGroup]);
 
   const showTimedSyncMessage = (message: string, duration: number) => {
     if (syncMessageTimerRef.current !== null) {
@@ -485,8 +505,9 @@ function App() {
   useEffect(() => {
     if (!showSettings && !hasInitialized.current) {
       hasInitialized.current = true;
-      loadNotes();
-      loadGroups();
+      void Promise.all([loadNotes(), loadGroups()]).finally(() => {
+        setIsInitialDataLoading(false);
+      });
       checkWindowPinned();
       // 启动时自动同步
       autoSyncOnStartup();
@@ -1969,15 +1990,26 @@ function App() {
 
       {/* 待办列表区域 */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 pb-4">
-        {notes.length === 0 && groups.length === 0 ? (
-          <div className="text-center text-gray-300 text-xs py-16">
-            <p>点击 + 创建待办</p>
+        {isInitialDataLoading ? (
+          <div
+            className="py-16 text-center text-xs text-gray-300"
+            role="status"
+            aria-label="正在加载待办"
+          >
+            正在加载...
+          </div>
+        ) : notes.length === 0 && groups.length === 0 ? (
+          <div className="flex flex-col items-center py-16 text-center">
+            <p className="text-xs text-gray-400">还没有待办</p>
             <button
               type="button"
-              onClick={() => void handleGeneratePassword()}
-              className="mt-3 text-cyan-400 hover:text-cyan-500"
+              onClick={() => void handleCreateNote()}
+              onMouseDown={preserveBlankDraftOnCreateMouseDown}
+              data-note-create-button="true"
+              className="mt-4 inline-flex h-8 items-center gap-1.5 rounded bg-cyan-400 px-3 text-xs text-white transition-colors hover:bg-cyan-500"
             >
-              生成密码
+              <span aria-hidden="true" className="text-base leading-none">+</span>
+              <span>新建待办</span>
             </button>
           </div>
         ) : (
@@ -2050,32 +2082,12 @@ function App() {
                     onMoveDown={() => handleMoveGroup(group.id, 1)}
                     canMoveUp={groupIndex > 0}
                     canMoveDown={groupIndex < activeGroupedNotes.length - 1}
-                    onDelete={async () => {
-                      const totalGroupNotes = notes.filter((note) => note.groupId === group.id).length;
-                      const hasNotes = totalGroupNotes > 0;
-                      const message = hasNotes
-                        ? `确定删除分组"${group.name}"吗？\n\n分组内的 ${totalGroupNotes} 个待办将移至未分类。`
-                        : `确定删除分组"${group.name}"吗？`;
-
-                      if (confirm(message)) {
-                        markGroupsMutation(group.id);
-                        markNotesMutation();
-                        try {
-                          await deleteGroup(group.id);
-                          setGroups((current) => current.filter((item) => item.id !== group.id));
-                          setNotes(
-                            useNotesStore.getState().notes.map((note) =>
-                              note.groupId === group.id
-                                ? { ...note, groupId: undefined }
-                                : note
-                            )
-                          );
-                          await Promise.all([loadGroups(), loadNotes()]);
-                        } catch (error) {
-                          locallyDeletedGroupIdsRef.current.delete(group.id);
-                          console.error("Failed to delete group:", error);
-                        }
-                      }
+                    onDelete={() => {
+                      setGroupDeleteConfirm({
+                        groupId: group.id,
+                        groupName: group.name,
+                        noteCount: notes.filter((note) => note.groupId === group.id).length,
+                      });
                     }}
                     onAdd={() => {
                       void handleCreateNote(false, { groupId: group.id });
@@ -2506,6 +2518,80 @@ function App() {
         <div className="absolute bottom-14 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
           <div className="max-w-full min-w-0 px-4 py-2 bg-gray-800 text-white text-xs leading-relaxed text-center rounded-md shadow-lg whitespace-normal break-words pointer-events-auto">
             {syncMessage}
+          </div>
+        </div>
+      )}
+      {groupDeleteConfirm && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !isDeletingGroup) {
+              setGroupDeleteConfirm(null);
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="group-delete-title"
+            aria-describedby="group-delete-description"
+            className="w-full max-w-[280px] rounded-lg border border-gray-200 bg-white p-4 shadow-xl"
+          >
+            <h2 id="group-delete-title" className="text-sm font-medium text-gray-800">
+              删除分组
+            </h2>
+            <div id="group-delete-description" className="mt-2 text-xs leading-5 text-gray-600">
+              <p className="break-words">
+                确定删除分组 <span className="font-medium text-gray-800">“{groupDeleteConfirm.groupName}”</span> 吗？
+              </p>
+              {groupDeleteConfirm.noteCount > 0 && (
+                <p className="mt-1 text-gray-500">
+                  分组内的 {groupDeleteConfirm.noteCount} 个待办将移至未分类。
+                </p>
+              )}
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={isDeletingGroup}
+                onClick={() => setGroupDeleteConfirm(null)}
+                className="rounded px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                autoFocus
+                disabled={isDeletingGroup}
+                onClick={async () => {
+                  const { groupId } = groupDeleteConfirm;
+                  setIsDeletingGroup(true);
+                  markGroupsMutation(groupId);
+                  markNotesMutation();
+                  try {
+                    await deleteGroup(groupId);
+                    setGroups((current) => current.filter((item) => item.id !== groupId));
+                    setNotes(
+                      useNotesStore.getState().notes.map((note) =>
+                        note.groupId === groupId
+                          ? { ...note, groupId: undefined }
+                          : note
+                      )
+                    );
+                    setGroupDeleteConfirm(null);
+                    await Promise.all([loadGroups(), loadNotes()]);
+                  } catch (error) {
+                    locallyDeletedGroupIdsRef.current.delete(groupId);
+                    console.error("Failed to delete group:", error);
+                  } finally {
+                    setIsDeletingGroup(false);
+                  }
+                }}
+                className="min-w-14 rounded bg-red-500 px-3 py-1.5 text-xs text-white hover:bg-red-600 disabled:cursor-wait disabled:opacity-60"
+              >
+                {isDeletingGroup ? "删除中..." : "删除"}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -58,6 +58,15 @@ test.describe('自定义分组功能', () => {
     await group.hover()
     await group.locator('button[aria-label*="删除"]').click()
 
+    const deleteDialog = page.getByRole('dialog', { name: '删除分组' })
+    await expect(deleteDialog).toContainText('确定删除分组 “临时分组” 吗？')
+    await deleteDialog.getByRole('button', { name: '取消' }).click()
+    await expect(page.locator('text=临时分组')).toBeVisible()
+
+    await group.hover()
+    await group.locator('button[aria-label*="删除"]').click()
+    await deleteDialog.getByRole('button', { name: '删除' }).click()
+
     await expect(page.locator('text=临时分组')).not.toBeVisible()
   })
 
@@ -119,6 +128,10 @@ test.describe('自定义分组功能', () => {
     const group = page.locator('text=临时分组').first()
     await group.hover()
     await group.locator('..').locator('button[aria-label*="删除"]').click()
+
+    const deleteDialog = page.getByRole('dialog', { name: '删除分组' })
+    await expect(deleteDialog).toContainText('分组内的 1 个待办将移至未分类。')
+    await deleteDialog.getByRole('button', { name: '删除' }).click()
 
     // 切换到未完成分组
     await page.locator('text=未完成').click()
