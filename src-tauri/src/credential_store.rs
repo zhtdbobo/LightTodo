@@ -112,18 +112,49 @@ mod platform {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+mod platform {
+    use security_framework::passwords::{
+        delete_generic_password, get_generic_password, set_generic_password,
+    };
+
+    const KEYCHAIN_SERVICE: &str = "com.lighttodo.desktop";
+    const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
+
+    pub fn read(target: &str) -> Result<Option<Vec<u8>>, String> {
+        match get_generic_password(KEYCHAIN_SERVICE, target) {
+            Ok(value) => Ok(Some(value)),
+            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
+            Err(error) => Err(format!("Failed to read macOS Keychain item: {error}")),
+        }
+    }
+
+    pub fn write(target: &str, _username: &str, secret: &[u8]) -> Result<(), String> {
+        set_generic_password(KEYCHAIN_SERVICE, target, secret)
+            .map_err(|error| format!("Failed to write macOS Keychain item: {error}"))
+    }
+
+    pub fn delete(target: &str) -> Result<(), String> {
+        match delete_generic_password(KEYCHAIN_SERVICE, target) {
+            Ok(()) => Ok(()),
+            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
+            Err(error) => Err(format!("Failed to delete macOS Keychain item: {error}")),
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 mod platform {
     pub fn read(_target: &str) -> Result<Option<Vec<u8>>, String> {
-        Err("Secure credential storage is only available on Windows".to_string())
+        Err("Secure credential storage is not available on this platform".to_string())
     }
 
     pub fn write(_target: &str, _username: &str, _secret: &[u8]) -> Result<(), String> {
-        Err("Secure credential storage is only available on Windows".to_string())
+        Err("Secure credential storage is not available on this platform".to_string())
     }
 
     pub fn delete(_target: &str) -> Result<(), String> {
-        Err("Secure credential storage is only available on Windows".to_string())
+        Err("Secure credential storage is not available on this platform".to_string())
     }
 }
 

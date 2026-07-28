@@ -9,7 +9,44 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  prepare:
+    runs-on: windows-latest
+    outputs:
+      release_body: ${{ steps.release_notes.outputs.body }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read release notes from changelog
+        id: release_notes
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content package.json -Raw -Encoding utf8 | ConvertFrom-Json).version
+          $tag = "v$version"
+          $changelog = Get-Content CHANGELOG.md -Raw -Encoding utf8
+          $escapedVersion = [regex]::Escape($version)
+          $match = [regex]::Match($changelog, "(?ms)^## \[$escapedVersion\].*?\r?\n(.*?)(?=^---\s*$)")
+          if (-not $match.Success) {
+            throw "CHANGELOG.md does not contain release notes for $version"
+          }
+          "body<<LIGHTTODO_RELEASE_NOTES" >> $env:GITHUB_OUTPUT
+          $match.Groups[1].Value.Trim() >> $env:GITHUB_OUTPUT
+          "LIGHTTODO_RELEASE_NOTES" >> $env:GITHUB_OUTPUT
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            $notesPath = Join-Path $env:RUNNER_TEMP "lighttodo-release-notes.md"
+            [System.IO.File]::WriteAllText(
+              $notesPath,
+              $match.Groups[1].Value.Trim(),
+              [System.Text.UTF8Encoding]::new($false)
+            )
+            gh release create $tag --draft --title $tag --notes-file $notesPath
+          }
+
+  build-windows:
+    needs: prepare
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,22 +65,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Read release notes from changelog
-        id: release_notes
-        shell: pwsh
-        run: |
-          $version = (Get-Content package.json -Raw -Encoding utf8 | ConvertFrom-Json).version
-          $changelog = Get-Content CHANGELOG.md -Raw -Encoding utf8
-          $escapedVersion = [regex]::Escape($version)
-          $match = [regex]::Match($changelog, "(?ms)^## \[$escapedVersion\].*?\r?\n(.*?)(?=^---\s*$)")
-          if (-not $match.Success) {
-            throw "CHANGELOG.md does not contain release notes for $version"
-          }
-          "body<<LIGHTTODO_RELEASE_NOTES" >> $env:GITHUB_OUTPUT
-          $match.Groups[1].Value.Trim() >> $env:GITHUB_OUTPUT
-          "LIGHTTODO_RELEASE_NOTES" >> $env:GITHUB_OUTPUT
-
-      - name: Build signed updater and draft release
+      - name: Build Windows updater
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -52,12 +74,62 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: v__VERSION__
-          releaseBody: ${{ steps.release_notes.outputs.body }}
+          releaseBody: ${{ needs.prepare.outputs.release_body }}
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
+          args: --bundles nsis
 
-      - name: Route updater downloads through gh-proxy.com
+  build-macos:
+    needs: prepare
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build universal macOS app and DMG
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: v__VERSION__
+          releaseName: v__VERSION__
+          releaseBody: ${{ needs.prepare.outputs.release_body }}
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: false
+          args: --target universal-apple-darwin --bundles app,dmg
+
+  finalize-release:
+    needs: [build-windows, build-macos]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add macOS updater targets and route downloads through gh-proxy.com
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -65,7 +137,27 @@ jobs:
           $version = (Get-Content package.json -Raw -Encoding utf8 | ConvertFrom-Json).version
           $tag = "v$version"
           gh release download $tag --pattern latest.json --output latest.json --clobber
+
+          $release = gh release view $tag --json assets | ConvertFrom-Json
+          $macUpdater = @($release.assets | Where-Object { $_.name -match '\.app\.tar\.gz$' })
+          $macSignature = @($release.assets | Where-Object { $_.name -match '\.app\.tar\.gz\.sig$' })
+          if ($macUpdater.Count -ne 1 -or $macSignature.Count -ne 1) {
+            throw "Expected exactly one universal macOS updater archive and signature"
+          }
+
+          $signatureName = $macSignature[0].name
+          gh release download $tag --pattern $signatureName --output macos-updater.sig --clobber
+          $signature = (Get-Content macos-updater.sig -Raw -Encoding utf8).Trim()
+          $assetName = [uri]::EscapeDataString($macUpdater[0].name)
+          $downloadUrl = "https://gh-proxy.com/github.com/zhtdbobo/LightTodo/releases/download/$tag/$assetName"
+          $macPlatform = [ordered]@{
+            signature = $signature
+            url = $downloadUrl
+          }
+
           $manifest = Get-Content latest.json -Raw -Encoding utf8 | ConvertFrom-Json
+          $manifest.platforms | Add-Member -NotePropertyName "darwin-aarch64" -NotePropertyValue $macPlatform -Force
+          $manifest.platforms | Add-Member -NotePropertyName "darwin-x86_64" -NotePropertyValue $macPlatform -Force
           foreach ($platform in $manifest.platforms.PSObject.Properties) {
             $platform.Value.url = $platform.Value.url -replace '^https://github\.com/', 'https://gh-proxy.com/github.com/'
           }

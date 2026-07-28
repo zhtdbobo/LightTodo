@@ -536,8 +536,8 @@ tauri-build = { version = "2.0" }
 
 Tauri 自动选择合适的数据目录：
 
-- **Windows**: `C:\Users\<用户名>\AppData\Roaming\com.lighttodo.app\`
-- **macOS**: `~/Library/Application Support/com.lighttodo.app/`
+- **Windows**: `%APPDATA%\lighttodo\`
+- **macOS**: `~/Library/Application Support/lighttodo/`
 - **Linux**: `~/.local/share/lighttodo/`
 
 数据库文件：`notes.db`
@@ -559,6 +559,9 @@ pnpm run tauri dev
 # 生产构建
 pnpm run tauri build
 
+# macOS 通用架构构建（Apple Silicon + Intel）
+pnpm run tauri:build:mac
+
 # 仅构建前端
 pnpm run build
 
@@ -570,9 +573,9 @@ tsc --noEmit
 
 运行 `pnpm run tauri build` 后，产物在：
 
-- **Windows**: `src-tauri/target/release/bundle/nsis/LightTodo_0.1.0_x64-setup.exe` (~3-5 MB)
-- **macOS**: `src-tauri/target/release/bundle/dmg/LightTodo_0.1.0_x64.dmg`
-- **Linux**: `src-tauri/target/release/bundle/deb/lighttodo_0.1.0_amd64.deb`
+- **Windows**: `src-tauri/target/release/bundle/nsis/LightTodo_<version>_x64-setup.exe` (~3-5 MB)
+- **macOS**: `src-tauri/target/universal-apple-darwin/release/bundle/dmg/LightTodo_<version>_universal.dmg`
+- **Linux**: `src-tauri/target/release/bundle/deb/lighttodo_<version>_amd64.deb`
 
 ---
 

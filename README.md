@@ -15,41 +15,42 @@
 - ☁️ **WebDAV 同步** - 支持坚果云、Nextcloud 等 WebDAV 云存储同步
 - 🔄 **智能同步** - 双向同步、上传、下载三种模式，智能合并数据
 - ⏰ **自动同步** - 启动时自动同步，支持定时后台同步（每 5 分钟）
+- 🔐 **密码待办** - 内置密码生成器，使用 AES-256-GCM 加密并支持跨设备同步
+- ⬆️ **应用内更新** - 自动检查、下载并安装签名更新包
 - 🎨 **简洁设计** - 极简界面，专注于待办本身
 - 💾 **自动保存** - 编辑后自动保存，无需手动操作
-- 📱 **跨平台核心** - SQLite 与普通待办功能支持 Windows、macOS、Linux；WebDAV 凭据和密码待办加密目前使用 Windows Credential Manager
+- 📱 **跨平台桌面端** - Windows 与 macOS 均支持普通待办、WebDAV 同步和密码待办；敏感凭据分别保存在 Windows Credential Manager 与 macOS Keychain
 - 🔒 **本地优先** - 数据本地 SQLite 存储，隐私安全
 
 ## 🚀 快速开始
 
 ### 环境要求
 
-#### 1. 安装 Node.js
+#### 1. 安装 Node.js 与 pnpm
 
 - **Node.js** 18+ - [下载地址](https://nodejs.org/)
-- 下载安装后，验证安装：
+- **pnpm** 11+ - 可通过 `corepack enable` 启用
+- 下载安装后验证：
   ```bash
   node --version
   pnpm --version
   ```
 
-#### 2. 安装 Rust
+#### 2. 安装 Rust 1.85+
 
-- **Rust** 1.70+ - [下载地址](https://rustup.rs/)
-- **安装步骤**：
-  1. 访问 https://rustup.rs/ 下载 `rustup-init.exe`（Windows）
-  2. 运行安装器，选择默认安装（输入 `1` 然后回车）
-  3. **重启终端**（让环境变量生效）
-  4. 验证安装：
-     ```bash
-     rustc --version
-     cargo --version
-     ```
+- 访问 [rustup.rs](https://rustup.rs/) 并按当前系统说明安装
+- 安装后重启终端并运行 `rustc --version`、`cargo --version` 验证
 
 #### 3. 安装 Windows 构建工具（仅 Windows）
 
 - 方式 1: 安装 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)，勾选 "C++ 生成工具"
 - 方式 2: 运行 `pnpm add -g windows-build-tools`（需要管理员权限）
+
+#### 4. 安装 macOS 构建工具（仅 macOS）
+
+```bash
+xcode-select --install
+```
 
 ### 克隆并启动项目
 
@@ -75,14 +76,22 @@ pnpm run tauri dev
 ### 构建生产版本
 
 ```bash
-# 打包为可执行文件
+# 当前平台构建
 pnpm run tauri build
 
-# 输出位置：
-# Windows: src-tauri/target/release/LightTodo.exe
-# macOS:   src-tauri/target/release/bundle/dmg/
+# 在 macOS 上构建同时支持 Apple Silicon 与 Intel 的通用安装包
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+pnpm run tauri:build:mac
+
+# 输出位置
+# Windows: src-tauri/target/release/bundle/nsis/
+# macOS:   src-tauri/target/universal-apple-darwin/release/bundle/dmg/
 # Linux:   src-tauri/target/release/bundle/appimage/
 ```
+
+macOS 安装包必须在 macOS 上构建。推送版本标签后，GitHub Actions 会同时生成 Windows `NSIS` 和 macOS 通用架构 `DMG`。
+
+不使用付费 Apple Developer 账号也能分发 `DMG`。未签名版本首次启动时，需要在 Finder 中右键 LightTodo 选择“打开”并确认；配置 Apple 签名与公证后才可直接双击打开而不显示 Gatekeeper 警告。
 
 ## 🧪 测试
 
@@ -107,12 +116,6 @@ pnpm dlx playwright install
 
 # 运行 E2E 测试
 pnpm run test:e2e
-
-# 交互式 UI 模式
-pnpm run test:e2e:ui
-
-# 调试模式
-pnpm run test:e2e:debug
 ```
 
 ## 📖 使用说明
@@ -148,6 +151,7 @@ pnpm run test:e2e:debug
 #### 今日待办
 - 在待办右侧菜单中设置截止日期和时间
 - 所有设置了 deadline 的未完成待办会自动显示在“今日”
+- 应用启动时仅“今日”分组自动展开，其他分组保持折叠
 - 到期后按小时显示逾期时间，完成后自动进入“已完成”
 
 #### 窗口置顶
@@ -164,7 +168,7 @@ pnpm run test:e2e:debug
 
 ### 待办分组
 
-- **今日** - 自动显示所有已设置 deadline 的未完成待办
+- **今日** - 自动显示所有已设置 deadline 的未完成待办，启动时默认展开
 - **自定义分组** - 创建自己的分组；未完成分组默认折叠，并在名称后显示条目数
 - **未分类** - 未分组的待办，按优先级排序，也支持折叠查看
 - **✓ 已完成** - 已完成的待办
@@ -175,6 +179,21 @@ pnpm run test:e2e:debug
 - **删除分组**：鼠标悬停在分组名称上，点击右侧的 **✕** 按钮（分组内的待办会移至"未分类"）
 - **调整顺序**：鼠标悬停在分组名称上，点击 **↑/↓** 将分组移动到上方或下方；顺序会保存并参与同步
 - **移动待办**：点击待办右侧的 **⋯** 按钮 → "移动到" → 选择目标分组
+
+### 密码待办
+
+- 在“密码”分组右侧打开生成菜单，可选择长度以及大写字母、小写字母、数字和特殊字符
+- 点击生成后，第一行填写用途备注，第二行保存生成的密码
+- 密码内容在本地使用 AES-256-GCM 加密；密钥保存在 Windows Credential Manager 或 macOS Keychain
+- 使用 WebDAV 时，vault envelope 会帮助其他受信任设备解锁同步后的密码待办，云端不保存明文密码
+
+### 应用更新
+
+1. 打开设置中心的“关于”页面
+2. 点击“检查更新”
+3. 发现新版本后点击“下载并安装”，应用会验证签名、安装并重启
+
+Windows 和 macOS 共用同一份更新清单；下载优先通过 `gh-proxy.com`，GitHub 直连作为回退。
 
 ### WebDAV 同步
 
@@ -229,7 +248,7 @@ pnpm run test:e2e:debug
 - `<同步目录>/notes/<ID>.json`：单条待办内容。
 - `<同步目录>/groups/<ID>.json`：单个分组内容。
 
-WebDAV 密码不会回填到 WebView，Windows 版本保存在 Windows Credential Manager；密码待办标题使用 AES-256-GCM 加密，vault key 通过 manifest 中的 envelope 在设备间共享。
+WebDAV 密码不会回填到 WebView，Windows 版本保存在 Windows Credential Manager，macOS 版本保存在系统 Keychain；密码待办标题使用 AES-256-GCM 加密，vault key 通过 manifest 中的 envelope 在设备间共享。
 
 **同步结果计数含义**：
 - **上传 (uploaded)**：本地修改后上传到云端的待办数量
@@ -258,7 +277,7 @@ WebDAV 密码不会回填到 WebView，Windows 版本保存在 Windows Credentia
 - **状态管理**: Zustand（轻量级）
 - **本地存储**: SQLite（Rust 后端，使用 rusqlite）
 - **WebDAV 客户端**: Rust reqwest + roxmltree
-- **UI**: Tailwind CSS + shadcn/ui
+- **UI**: Tailwind CSS
 - **构建工具**: Vite
 - **测试框架**: Vitest + React Testing Library + Playwright
 
@@ -266,8 +285,8 @@ WebDAV 密码不会回填到 WebView，Windows 版本保存在 Windows Credentia
 - 安装包体积仅 3-5 MB（Electron 通常 50+ MB）
 - 内存占用更低（使用系统 WebView2，无需打包浏览器）
 - 原生性能更好（Rust 后端）
-- 无需 Visual Studio（只需 Rust 工具链）
-- 支持 Windows / macOS / Linux 跨平台打包；非 Windows 平台需要另行提供系统凭据存储实现后，才能启用 WebDAV 和密码待办
+- 使用系统 WebView，无需随应用打包浏览器运行时
+- 支持 Windows / macOS / Linux 跨平台打包；Windows 与 macOS 已接入系统凭据存储，Linux 仍需补充对应实现后才能启用 WebDAV 和密码待办
 
 ## 📁 数据存储
 
@@ -378,9 +397,15 @@ CREATE TABLE webdav_config (
 - [x] 核心 hooks 单元测试（useNotes, useGroups）
 - [x] Store 单元测试（notesStore）
 - [x] API 层单元测试（WebDAV sync api）
-- [ ] 冲突检测与处理（版本控制）
+- [x] 基于更新时间、哈希和删除墓碑的冲突处理
 - [ ] 离线队列
 - [ ] 透明窗口 + IME 兼容（等待 Tauri 修复）
+
+### v0.2.9 - macOS 发布支持 ✅
+- [x] Apple Silicon 与 Intel 通用架构 DMG
+- [x] macOS Keychain 凭据存储
+- [x] Windows 与 macOS 并行发布构建
+- [x] 跨平台应用内自动更新
 
 ### v0.3.0 - 增强功能
 - [ ] 标签系统
@@ -396,10 +421,10 @@ CREATE TABLE webdav_config (
 - [ ] 重复任务设置
 - [ ] 性能优化
 - [ ] 快捷键系统
-- [ ] 自动更新检查
+- [x] 自动更新检查、下载与安装
 
 ### 未来计划
-- [ ] Markdown 基础支持
+- [x] Markdown 基础支持
 - [ ] 多设备同步历史查看
 - [ ] 附件支持（图片）
 - [ ] 待办模板
@@ -437,9 +462,8 @@ LightTodo/
 │   │   │   ├── hooks/      # API hooks (useNotes.ts, useGroups.ts)
 │   │   │   ├── stores/     # Zustand 状态管理
 │   │   │   └── types/      # TypeScript 类型定义
-│   │   └── sync/           # WebDAV 同步功能
-│   │       ├── api.ts      # 同步 API 调用
-│   │       └── WebDAVSettings.tsx  # 设置界面
+│   │   ├── sync/           # WebDAV 同步 API
+│   │   └── settings/       # 同步、关于与更新设置
 │   ├── App.tsx             # 主应用组件
 │   └── main.tsx            # 入口文件
 ├── src-tauri/               # Rust 后端代码
@@ -450,7 +474,9 @@ LightTodo/
 │   │   ├── webdav.rs       # WebDAV 客户端实现
 │   │   ├── sync.rs         # 同步逻辑
 │   │   └── main.rs         # Rust 入口 + 托盘配置
-│   ├── tauri.conf.json     # Tauri 配置
+│   ├── tauri.conf.json     # 跨平台 Tauri 配置
+│   ├── tauri.windows.conf.json # Windows NSIS 配置
+│   ├── tauri.macos.conf.json   # macOS App/DMG 配置
 │   └── Cargo.toml          # Rust 依赖
 ├── public/                  # 静态资源
 └── README.md               # 本文件

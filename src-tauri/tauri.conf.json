@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2.0",
   "productName": "LightTodo",
-  "version": "0.2.8",
-  "identifier": "com.lighttodo.app",
+  "version": "0.2.9",
+  "identifier": "com.lighttodo.desktop",
   "build": {
     "beforeDevCommand": "pnpm run dev",
     "beforeBuildCommand": "pnpm run build",
@@ -35,13 +35,6 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["nsis"],
-    "windows": {
-      "nsis": {
-        "installMode": "perMachine",
-        "installerHooks": "windows/nsis-hooks.nsh"
-      }
-    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -56,10 +49,7 @@
         "https://gh-proxy.com/github.com/zhtdbobo/LightTodo/releases/latest/download/latest.json",
         "https://github.com/zhtdbobo/LightTodo/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI2Qjc4MTlDMkNBMzc0OTgKUldTWWRLTXNuSUczSmpvYW90cWxtaUhBZEVjZzJlRk1MZVBSOWNxdlNXZzFaNGQwbUs4UVE5U04K",
-      "windows": {
-        "installMode": "passive"
-      }
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI2Qjc4MTlDMkNBMzc0OTgKUldTWWRLTXNuSUczSmpvYW90cWxtaUhBZEVjZzJlRk1MZVBSOWNxdlNXZzFaNGQwbUs4UVE5U04K"
     }
   }
 }

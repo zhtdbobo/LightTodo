@@ -373,7 +373,9 @@ function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [showSyncMenu, setShowSyncMenu] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [expandedActiveGroups, setExpandedActiveGroups] = useState<Set<string>>(new Set());
+  const [expandedActiveGroups, setExpandedActiveGroups] = useState<Set<string>>(
+    () => new Set(["active-today"])
+  );
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [isCompletedExpanded, setIsCompletedExpanded] = useState(false);
   const isReorderingGroupsRef = useRef(false);

@@ -62,7 +62,13 @@ Release Note 统一使用中文，并按下面结构编写：
 
 这是 Windows 用户最常用的安装包，属于必传文件。
 
-### 3.2 可选文件
+### 3.2 macOS 安装包
+
+- `LightTodo_<version>_universal.dmg`
+
+该安装包同时支持 Apple Silicon 与 Intel Mac，也属于必传文件。
+
+### 3.3 可选文件
 
 如果构建流程产出这些文件，也可以一并上传：
 
@@ -74,18 +80,18 @@ Release Note 统一使用中文，并按下面结构编写：
 - `*.zip`
 - `*.sha256` 或其他校验文件
 
-### 3.3 当前项目建议
+### 3.4 当前项目建议
 
-LightTodo 当前默认以 Windows `NSIS` 安装包作为主发布文件，因此每次 release 至少要确保：
+LightTodo 当前同时发布 Windows `NSIS` 和 macOS 通用架构 `DMG`，因此每次 release 至少要确保：
 
 - `LightTodo_<version>_x64-setup.exe`
 - `LightTodo_<version>_x64-setup.exe.sig`
+- `LightTodo_<version>_universal.dmg`
+- macOS `*.app.tar.gz` 及其 `.sig`
 - `latest.json`
 - Release Note 已更新为中文
 
-其中签名文件和 `latest.json` 供应用内自动更新使用。缺少任意一项时，旧版本仍可运行，但无法完成应用内更新。
-
-如果将来开启更多平台，再补充对应平台的安装包。
+其中签名文件和 `latest.json` 供 Windows 与 macOS 应用内自动更新使用。缺少任意一项时，旧版本仍可运行，但对应平台无法完成应用内更新。
 
 ## 4. Release 发布流程
 
@@ -105,6 +111,17 @@ LightTodo 当前默认以 Windows `NSIS` 安装包作为主发布文件，因此
 
 私钥不得提交到 Git，也不能丢失；后续版本必须始终使用同一把密钥签名。
 
+面向普通用户分发 macOS 版本时，还应配置 Apple Developer 签名与公证 Secrets：
+
+- `APPLE_CERTIFICATE`
+- `APPLE_CERTIFICATE_PASSWORD`
+- `APPLE_SIGNING_IDENTITY`
+- `APPLE_ID`
+- `APPLE_PASSWORD`
+- `APPLE_TEAM_ID`
+
+未配置这些 Secrets 时仍可生成 `DMG`，但 macOS Gatekeeper 会提示应用来自未识别的开发者。
+
 推荐推送 `v<version>` tag，由 `.github/workflows/release.yml` 自动构建签名更新包和草稿 Release：
 
 ```bash
@@ -122,13 +139,14 @@ pnpm run tauri build
 
 ```text
 src-tauri/target/release/bundle/nsis/LightTodo_<version>_x64-setup.exe
+src-tauri/target/universal-apple-darwin/release/bundle/dmg/LightTodo_<version>_universal.dmg
 ```
 
 ### 4.3 发布流程
 
 1. 给当前版本打 tag 并推送
 2. 等待 GitHub Actions 创建草稿 Release
-3. 检查安装包、签名文件和 `latest.json` 是否齐全
+3. 检查 Windows、macOS 安装包、签名文件和 `latest.json` 是否齐全
 4. 完善 Release Note 后发布草稿
 5. 发布后确认 `latest.json` 可以访问
 
@@ -160,6 +178,7 @@ Release 工作流会自动将 `latest.json` 中的安装包地址改为 `gh-prox
 - [ ] Release Note 为中文
 - [ ] `## 主要功能` 和 `## 发布说明` 结构完整
 - [ ] Windows `NSIS` 安装包已上传
+- [ ] macOS 通用架构 `DMG` 已上传
 - [ ] 签名文件和 `latest.json` 已上传
 - [ ] Release 页面没有多余旧资产
 - [ ] 标题、正文、资产命名一致
@@ -176,4 +195,4 @@ Release 工作流会自动将 `latest.json` 中的安装包地址改为 `gh-prox
 
 ---
 
-如果后续增加 macOS / Linux 发布包，本文件应同步补充对应平台的上传规范。
+如果后续增加 Linux 发布包，本文件应同步补充对应平台的上传规范。

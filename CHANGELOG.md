@@ -2,6 +2,31 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)规范。
 
+## [0.2.9] - 2026-07-28
+
+### 主要功能
+
+- macOS 发布：新增同时支持 Apple Silicon 与 Intel 的通用架构 `DMG`
+- macOS 安全存储：WebDAV 密码和密码待办密钥接入系统 Keychain
+- 跨平台更新：Windows 与 macOS 共用签名更新清单并支持应用内下载安装
+- 分组默认状态：应用启动时自动展开“今日”，其他分组保持折叠
+
+### 修复与改进
+
+- 按平台拆分 Tauri 打包配置，保留现有 Windows 安装标识并为 macOS 使用兼容的 bundle identifier
+- Windows `NSIS` 与 macOS `DMG` 在版本标签发布时并行构建，完成后统一写入更新清单
+- 补充 macOS 本地构建、免费未公证分发、Apple 签名公证及发布资产说明
+- 更新 README，使功能、测试命令、项目结构和路线图与当前实现一致
+
+### 发布说明
+
+- `v0.2.9` 为 LightTodo 的 macOS 发布与分组默认状态更新版本
+- Release 同时提供 Windows x64 安装包和 macOS 通用架构 DMG
+- 未配置付费 Apple Developer 证书时，DMG 仍可安装，但首次启动需要用户通过右键“打开”确认
+- 本版本未改变数据库结构和 WebDAV 同步协议
+
+---
+
 ## [0.2.8] - 2026-07-28
 
 ### 主要功能
@@ -180,4 +205,5 @@
 [0.2.6]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.6
 [0.2.7]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.7
 [0.2.8]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.8
+[0.2.9]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.9
 [0.1.0]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.1.0
