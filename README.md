@@ -16,6 +16,7 @@
 - 🔄 **智能同步** - 双向同步、上传、下载三种模式，智能合并数据
 - ⏰ **自动同步** - 启动时自动同步，支持定时后台同步（每 5 分钟）
 - 🔐 **密码待办** - 内置密码生成器，使用 AES-256-GCM 加密并支持跨设备同步
+- 📦 **本地备份** - 将全部待办、分组和标签导出为 JSON，并可通过事务安全恢复
 - ⬆️ **应用内更新** - 自动检查、下载并安装签名更新包
 - 🎨 **简洁设计** - 极简界面，专注于待办本身
 - 💾 **自动保存** - 编辑后自动保存，无需手动操作
@@ -156,7 +157,7 @@ pnpm run test:e2e
 #### 今日待办
 - 在待办右侧菜单中设置截止日期和时间
 - 所有设置了 deadline 的未完成待办会自动显示在“今日”
-- 应用启动时仅“今日”分组自动展开，其他分组保持折叠
+- 默认每次显示主窗口时展开“今日”分组；可在“设置 → 常规”中关闭，重新启动应用后开关恢复开启
 - 到期后按小时显示逾期时间，完成后自动进入“已完成”
 
 #### 窗口置顶
@@ -170,10 +171,11 @@ pnpm run test:e2e
 - 右键点击托盘图标：显示菜单
   - **显示窗口** - 重新打开窗口
   - **退出** - 完全退出应用
+- 应用已经运行时再次点击启动入口，只会唤起现有窗口，不会创建多个实例
 
 ### 待办分组
 
-- **今日** - 自动显示所有已设置 deadline 的未完成待办，启动时默认展开
+- **今日** - 自动显示所有已设置 deadline 的未完成待办，默认在每次显示窗口时展开
 - **自定义分组** - 创建自己的分组；未完成分组默认折叠，并在名称后显示条目数
 - **未分类** - 未分组的待办，按优先级排序，也支持折叠查看
 - **✓ 已完成** - 已完成的待办
@@ -199,6 +201,14 @@ pnpm run test:e2e
 3. 发现新版本后点击“下载并安装”，应用会验证签名、安装并重启
 
 Windows 和 macOS 共用同一份更新清单；下载优先通过 `gh-proxy.com`，GitHub 直连作为回退。
+
+### 本地备份
+
+1. 打开设置中心的“同步”页面
+2. 点击“导出备份”，通过系统文件对话框选择 JSON 文件的保存位置
+3. 需要恢复时点击“导入备份”，选择文件并确认替换当前数据
+
+导入会在一个数据库事务内替换待办、分组和标签；校验或写入失败时会完整回滚。为了支持密码待办跨设备恢复，导出的文件包含密码条目的明文内容，请只保存到可信位置。
 
 ### WebDAV 同步
 
@@ -315,6 +325,8 @@ CREATE TABLE notes (
   pinned INTEGER NOT NULL DEFAULT 0,
   priority INTEGER NOT NULL DEFAULT 0,  -- 0=低, 1=中, 2=高
   group_id TEXT,                         -- 所属分组ID
+  completed_at INTEGER,
+  deadline INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   synced_at INTEGER
@@ -361,79 +373,16 @@ CREATE TABLE webdav_config (
   "isCompleted": false,
   "priority": 2,
   "pinned": false,
+  "groupId": null,
+  "deadline": 1780086400000,
   "createdAt": 1780000000000,
   "updatedAt": 1780000000000
 }
 ```
 
-## 🗺️ 开发路线图
+## 📌 项目状态
 
-### v0.1.0 - 核心功能 ✅
-- [x] 基础待办 CRUD（创建、编辑、删除）
-- [x] Todo 勾选完成状态
-- [x] 本地 SQLite 存储
-- [x] 三级优先级标记
-- [x] 按优先级自动排序
-- [x] 窗口置顶功能
-- [x] 系统托盘支持
-- [x] 托盘右键菜单
-- [x] 自动保存
-- [x] 简洁 UI 界面
-- [x] 中文输入支持（关闭透明窗口）
-- [x] Enter 键快速创建待办（连续输入）
-- [x] 窗口位置和大小记忆
-
-### v0.2.0 - WebDAV 同步 ✅
-- [x] WebDAV 配置界面
-- [x] 测试连接功能
-- [x] 手动同步功能（双向同步）
-- [x] 上传到云端（单向推送）
-- [x] 从云端下载（单向拉取）
-- [x] 同步状态提示
-- [x] 智能合并策略（按更新时间）
-- [x] 多行待办支持
-- [x] 删除同步（删除本地待办后自动删除云端文件）
-- [x] 自动同步开关（启动时自动同步）
-- [x] 定时自动同步（每 5 分钟）
-- [x] Deadline 与今日智能分组
-- [x] 自定义分组功能
-- [x] 单元测试框架搭建（Vitest + React Testing Library）
-- [x] E2E 测试框架搭建（Playwright）
-- [x] 核心 hooks 单元测试（useNotes, useGroups）
-- [x] Store 单元测试（notesStore）
-- [x] API 层单元测试（WebDAV sync api）
-- [x] 基于更新时间、哈希和删除墓碑的冲突处理
-- [ ] 离线队列
-- [ ] 透明窗口 + IME 兼容（等待 Tauri 修复）
-
-### v0.2.9 - macOS 发布支持 ✅
-- [x] Apple Silicon 与 Intel 通用架构 DMG
-- [x] macOS Keychain 凭据存储
-- [x] Windows 与 macOS 并行发布构建
-- [x] 跨平台应用内自动更新
-
-### v0.3.0 - 增强功能
-- [ ] 标签系统
-- [ ] 颜色标记
-- [ ] 全文搜索
-- [ ] 深色模式
-- [ ] 导入/导出 JSON
-- [ ] 待办回收站
-- [ ] 子任务支持
-
-### v1.0.0 - 正式版
-- [ ] 提醒功能（桌面通知）
-- [ ] 重复任务设置
-- [ ] 性能优化
-- [ ] 快捷键系统
-- [x] 自动更新检查、下载与安装
-
-### 未来计划
-- [x] Markdown 基础支持
-- [ ] 多设备同步历史查看
-- [ ] 附件支持（图片）
-- [ ] 待办模板
-- [ ] 加密存储选项
+README 只介绍当前可用能力，不再维护按旧版本划分的路线图。当前代码版本、已完成功能和尚未完成功能统一记录在 [功能状态文档](docs/FEATURE_STATUS.md)，历史版本变化记录在 [CHANGELOG](CHANGELOG.md)。
 
 ## 🤝 贡献
 
@@ -467,23 +416,28 @@ LightTodo/
 │   │   │   ├── hooks/      # API hooks (useNotes.ts, useGroups.ts)
 │   │   │   ├── stores/     # Zustand 状态管理
 │   │   │   └── types/      # TypeScript 类型定义
-│   │   ├── sync/           # WebDAV 同步 API
-│   │   └── settings/       # 同步、关于与更新设置
+│   │   ├── sync/           # WebDAV 同步与本地备份
+│   │   └── settings/       # 常规、同步、关于与更新设置
 │   ├── App.tsx             # 主应用组件
 │   └── main.tsx            # 入口文件
 ├── src-tauri/               # Rust 后端代码
 │   ├── src/
+│   │   ├── backup.rs       # JSON 备份导入与导出
 │   │   ├── commands/       # Tauri 命令 (CRUD 操作)
+│   │   ├── crypto.rs       # 密码待办加密与 vault 管理
+│   │   ├── credential_store.rs # 系统凭据存储
 │   │   ├── database/       # SQLite 数据库初始化
 │   │   ├── models/         # 数据模型定义
 │   │   ├── webdav.rs       # WebDAV 客户端实现
-│   │   ├── sync.rs         # 同步逻辑
+│   │   ├── sync.rs         # WebDAV 配置与同步入口
+│   │   ├── sync_manifest.rs # 增量同步与冲突处理
 │   │   └── main.rs         # Rust 入口 + 托盘配置
 │   ├── tauri.conf.json     # 跨平台 Tauri 配置
 │   ├── tauri.windows.conf.json # Windows NSIS 配置
 │   ├── tauri.macos.conf.json   # macOS App/DMG 配置
 │   └── Cargo.toml          # Rust 依赖
-├── public/                  # 静态资源
+├── docs/                    # 开发、发布与功能状态文档
+├── CHANGELOG.md             # 版本更新记录
 └── README.md               # 本文件
 ```
 

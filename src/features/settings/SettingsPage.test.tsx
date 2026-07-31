@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
+import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 import packageInfo from "../../../package.json";
 import { render, screen } from "../../test-utils";
 import { SettingsPage } from "./SettingsPage";
@@ -21,6 +23,14 @@ vi.mock("@tauri-apps/plugin-process", () => ({
 
 vi.mock("@tauri-apps/plugin-updater", () => ({
   check: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  emit: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
 }));
 
 describe("SettingsPage", () => {
@@ -46,6 +56,26 @@ describe("SettingsPage", () => {
     await user.click(screen.getByRole("link", { name: "GitHub" }));
 
     expect(openUrl).toHaveBeenCalledWith("https://github.com/zhtdbobo/LightTodo");
+  });
+
+  it("每次启动时默认开启打开窗口展开今日分组，可在常规设置中切换", async () => {
+    const user = userEvent.setup();
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "get_expand_today_on_open") return true;
+      return undefined;
+    });
+    render(<SettingsPage />);
+
+    await user.click(screen.getByRole("tab", { name: /常规/ }));
+
+    const toggle = await screen.findByRole("switch", { name: "打开窗口时展开今日分组" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+
+    await user.click(toggle);
+
+    expect(invoke).toHaveBeenCalledWith("set_expand_today_on_open", { enabled: false });
+    expect(emit).toHaveBeenCalledWith("expand-today-on-open-changed", false);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
   });
 
   it("检查到新版本后在应用内下载、安装并重启", async () => {

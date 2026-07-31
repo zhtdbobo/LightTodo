@@ -6,6 +6,7 @@ import {
   type WebDAVConfig,
 } from "../sync/api";
 import { listen } from "@tauri-apps/api/event";
+import { LocalBackup } from "./LocalBackup";
 
 export function WebDAVSettings() {
   const [config, setConfig] = useState<WebDAVConfig>({
@@ -276,6 +277,8 @@ export function WebDAVSettings() {
           </div>
         )}
       </div>
+
+      <LocalBackup />
 
       {/* 说明 */}
       <div className="mt-8 p-4 bg-gray-50 rounded-md">

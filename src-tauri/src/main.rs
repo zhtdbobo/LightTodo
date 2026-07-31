@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod backup;
 mod commands;
 mod credential_store;
 mod crypto;
@@ -12,10 +13,37 @@ mod webdav;
 
 use commands::AppState;
 use database::Database;
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Manager, WindowEvent};
+use tauri::{Emitter, Manager, State, WindowEvent};
+
+struct UiPreferences {
+    expand_today_on_open: AtomicBool,
+}
+
+#[tauri::command]
+fn get_expand_today_on_open(preferences: State<'_, UiPreferences>) -> bool {
+    preferences.expand_today_on_open.load(Ordering::Relaxed)
+}
+
+#[tauri::command]
+fn set_expand_today_on_open(enabled: bool, preferences: State<'_, UiPreferences>) {
+    preferences
+        .expand_today_on_open
+        .store(enabled, Ordering::Relaxed);
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.emit("main-window-opened", ());
+    }
+}
 
 fn main() {
     // 初始化数据库
@@ -40,6 +68,10 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -50,7 +82,16 @@ fn main() {
             vault_lock: Arc::new(tokio::sync::Mutex::new(())),
             sync_cancelled: Arc::new(AtomicBool::new(false)),
         })
+        .manage(UiPreferences {
+            // This is deliberately process-local: every fresh application launch
+            // starts with the option enabled, regardless of the previous run.
+            expand_today_on_open: AtomicBool::new(true),
+        })
         .invoke_handler(tauri::generate_handler![
+            get_expand_today_on_open,
+            set_expand_today_on_open,
+            backup::export_backup,
+            backup::import_backup,
             commands::get_all_notes,
             commands::get_note_by_id,
             commands::create_note,
@@ -87,10 +128,7 @@ fn main() {
             let _tray = tray_builder
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                        show_main_window(app);
                     }
                     "settings" => {
                         use tauri::Manager;
@@ -132,8 +170,7 @@ fn main() {
                                 if window.is_visible().unwrap_or(false) {
                                     let _ = window.hide();
                                 } else {
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
+                                    show_main_window(app);
                                 }
                             }
                         }

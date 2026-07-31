@@ -17,6 +17,9 @@
     "core:webview:allow-get-all-webviews",
     "core:event:allow-emit",
     "core:event:allow-listen",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-confirm",
     "process:allow-restart",
     "updater:default",
     {

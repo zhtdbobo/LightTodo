@@ -1,21 +1,32 @@
 import { useState, type ReactNode } from "react";
 import { WebDAVSettings } from "../sync/WebDAVSettings";
 import { AboutPage } from "./AboutPage";
+import { GeneralSettings } from "./GeneralSettings";
 
-type SettingsSection = "sync" | "about";
+type SettingsSection = "general" | "sync" | "about";
 
 interface NavigationItem {
   id: SettingsSection;
   label: string;
-  description: string;
   icon: ReactNode;
 }
 
 const navigationItems: NavigationItem[] = [
   {
+    id: "general",
+    label: "常规",
+    icon: (
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M7 12h10M9 18h6" />
+        <circle cx="9" cy="6" r="1.5" fill="currentColor" stroke="none" />
+        <circle cx="14" cy="12" r="1.5" fill="currentColor" stroke="none" />
+        <circle cx="11" cy="18" r="1.5" fill="currentColor" stroke="none" />
+      </svg>
+    ),
+  },
+  {
     id: "sync",
     label: "同步",
-    description: "WebDAV 配置",
     icon: (
       <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
         <path strokeLinecap="round" strokeLinejoin="round" d="M20 7h-7.5a4.5 4.5 0 0 0-4.24 3M4 17h7.5a4.5 4.5 0 0 0 4.24-3" />
@@ -26,7 +37,6 @@ const navigationItems: NavigationItem[] = [
   {
     id: "about",
     label: "关于",
-    description: "版本与信息",
     icon: (
       <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
         <circle cx="12" cy="12" r="9" />
@@ -68,12 +78,7 @@ export function SettingsPage() {
                 <span className={isActive ? "text-cyan-600" : "text-gray-400"}>
                   {item.icon}
                 </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium">{item.label}</span>
-                  <span className={`block truncate text-[11px] ${isActive ? "text-cyan-500" : "text-gray-400"}`}>
-                    {item.description}
-                  </span>
-                </span>
+                <span className="min-w-0 truncate text-sm font-medium">{item.label}</span>
               </button>
             );
           })}
@@ -84,10 +89,22 @@ export function SettingsPage() {
         <section
           id={`settings-panel-${activeSection}`}
           role="tabpanel"
-          aria-label={activeSection === "sync" ? "同步设置" : "关于 LightTodo"}
+          aria-label={
+            activeSection === "general"
+              ? "常规设置"
+              : activeSection === "sync"
+                ? "同步设置"
+                : "关于 LightTodo"
+          }
           className="min-h-full"
         >
-          {activeSection === "sync" ? <WebDAVSettings /> : <AboutPage />}
+          {activeSection === "general" ? (
+            <GeneralSettings />
+          ) : activeSection === "sync" ? (
+            <WebDAVSettings />
+          ) : (
+            <AboutPage />
+          )}
         </section>
       </main>
     </div>

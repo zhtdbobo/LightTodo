@@ -383,6 +383,7 @@ function App() {
   const [expandedActiveGroups, setExpandedActiveGroups] = useState<Set<string>>(
     () => new Set(["active-today"])
   );
+  const expandTodayOnOpenRef = useRef(true);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [isCompletedExpanded, setIsCompletedExpanded] = useState(false);
   const isReorderingGroupsRef = useRef(false);
@@ -602,6 +603,84 @@ function App() {
     return () => {
       disposed = true;
       unlisten?.();
+    };
+  }, [showSettings]);
+
+  useEffect(() => {
+    if (showSettings) return;
+
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen("local-backup-imported", () => {
+          void Promise.all([loadNotes(), loadGroups()]);
+        })
+      )
+      .then((stopListening) => {
+        if (disposed) {
+          stopListening();
+        } else {
+          unlisten = stopListening;
+        }
+      })
+      .catch((error) => console.error("Failed to listen for backup imports:", error));
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [showSettings]);
+
+  useEffect(() => {
+    if (showSettings) return;
+
+    let disposed = false;
+    const unlisteners: Array<() => void> = [];
+
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke<boolean>("get_expand_today_on_open"))
+      .then((enabled) => {
+        if (!disposed && typeof enabled === "boolean") {
+          expandTodayOnOpenRef.current = enabled;
+        }
+      })
+      .catch((error) => console.error("Failed to load UI preferences:", error));
+
+    void import("@tauri-apps/api/event")
+      .then(async ({ listen }) => {
+        const stopPreferenceListener = await listen<boolean>(
+          "expand-today-on-open-changed",
+          (event) => {
+            expandTodayOnOpenRef.current = event.payload;
+          }
+        );
+        if (disposed) {
+          stopPreferenceListener();
+          return;
+        }
+        unlisteners.push(stopPreferenceListener);
+
+        const stopWindowListener = await listen("main-window-opened", () => {
+          if (!expandTodayOnOpenRef.current) return;
+          setExpandedActiveGroups((current) => {
+            if (current.has("active-today")) return current;
+            const next = new Set(current);
+            next.add("active-today");
+            return next;
+          });
+        });
+        if (disposed) {
+          stopWindowListener();
+          return;
+        }
+        unlisteners.push(stopWindowListener);
+      })
+      .catch((error) => console.error("Failed to listen for window open events:", error));
+
+    return () => {
+      disposed = true;
+      unlisteners.forEach((unlisten) => unlisten());
     };
   }, [showSettings]);
 
