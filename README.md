@@ -2,6 +2,8 @@
 
 一个轻量级、支持 WebDAV 同步的待办事项应用
 
+当前版本：`v0.3.1` · [更新日志](CHANGELOG.md) · [功能状态](docs/FEATURE_STATUS.md)
+
 ## ✨ 特性
 
 - 🪶 **极致轻量** - Tauri 架构，安装包仅 3-5 MB，内存占用低
