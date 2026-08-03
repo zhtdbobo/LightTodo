@@ -13,6 +13,10 @@ vi.mock("../sync/WebDAVSettings", () => ({
   WebDAVSettings: () => <div>同步配置内容</div>,
 }));
 
+vi.mock("../sync/LocalBackup", () => ({
+  LocalBackup: () => <div>本地备份内容</div>,
+}));
+
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
 }));
@@ -56,6 +60,18 @@ describe("SettingsPage", () => {
     await user.click(screen.getByRole("link", { name: "GitHub" }));
 
     expect(openUrl).toHaveBeenCalledWith("https://github.com/zhtdbobo/LightTodo");
+  });
+
+  it("将备份作为独立设置选项展示", async () => {
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+
+    await user.click(screen.getByRole("tab", { name: "备份" }));
+
+    expect(screen.getByRole("tabpanel", { name: "备份设置" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "备份" })).toBeInTheDocument();
+    expect(screen.getByText("本地备份内容")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "备份" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("每次启动时默认开启打开窗口展开今日分组，可在常规设置中切换", async () => {

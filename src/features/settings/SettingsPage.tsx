@@ -1,9 +1,10 @@
 import { useState, type ReactNode } from "react";
+import { LocalBackup } from "../sync/LocalBackup";
 import { WebDAVSettings } from "../sync/WebDAVSettings";
 import { AboutPage } from "./AboutPage";
 import { GeneralSettings } from "./GeneralSettings";
 
-type SettingsSection = "general" | "sync" | "about";
+type SettingsSection = "general" | "sync" | "backup" | "about";
 
 interface NavigationItem {
   id: SettingsSection;
@@ -31,6 +32,16 @@ const navigationItems: NavigationItem[] = [
       <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
         <path strokeLinecap="round" strokeLinejoin="round" d="M20 7h-7.5a4.5 4.5 0 0 0-4.24 3M4 17h7.5a4.5 4.5 0 0 0 4.24-3" />
         <path strokeLinecap="round" strokeLinejoin="round" d="m17 4 3 3-3 3M7 14l-3 3 3 3" />
+      </svg>
+    ),
+  },
+  {
+    id: "backup",
+    label: "备份",
+    icon: (
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 7.5h16v11H4zM7 4.5h10l3 3H4z" />
+        <path strokeLinecap="round" d="M9 12h6M12 9v6" />
       </svg>
     ),
   },
@@ -94,7 +105,9 @@ export function SettingsPage() {
               ? "常规设置"
               : activeSection === "sync"
                 ? "同步设置"
-                : "关于 LightTodo"
+                : activeSection === "backup"
+                  ? "备份设置"
+                  : "关于 LightTodo"
           }
           className="min-h-full"
         >
@@ -102,6 +115,13 @@ export function SettingsPage() {
             <GeneralSettings />
           ) : activeSection === "sync" ? (
             <WebDAVSettings />
+          ) : activeSection === "backup" ? (
+            <div className="mx-auto w-full max-w-2xl p-8">
+              <div className="mb-7">
+                <h2 className="text-2xl font-semibold tracking-tight text-gray-900">备份</h2>
+              </div>
+              <LocalBackup />
+            </div>
           ) : (
             <AboutPage />
           )}

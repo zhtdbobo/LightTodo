@@ -76,7 +76,7 @@ export function LocalBackup() {
   };
 
   return (
-    <section className="mt-8 border-t border-gray-200 pt-7" aria-labelledby="local-backup-title">
+    <section aria-labelledby="local-backup-title">
       <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
         <h3 id="local-backup-title" className="font-medium text-gray-900">本地备份</h3>
         <p className="mt-1 text-sm leading-6 text-gray-500">
