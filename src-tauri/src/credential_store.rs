@@ -143,7 +143,22 @@ mod platform {
     }
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(target_os = "android")]
+mod platform {
+    pub fn read(target: &str) -> Result<Option<Vec<u8>>, String> {
+        crate::mobile_secure_storage::read(target)
+    }
+
+    pub fn write(target: &str, _username: &str, secret: &[u8]) -> Result<(), String> {
+        crate::mobile_secure_storage::write(target, secret)
+    }
+
+    pub fn delete(target: &str) -> Result<(), String> {
+        crate::mobile_secure_storage::delete(target)
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "android")))]
 mod platform {
     pub fn read(_target: &str) -> Result<Option<Vec<u8>>, String> {
         Err("Secure credential storage is not available on this platform".to_string())

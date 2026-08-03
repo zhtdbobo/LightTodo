@@ -4,6 +4,7 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { useState, type MouseEvent } from "react";
 import appIcon from "../../../src-tauri/icons/icon-source.svg";
 import packageInfo from "../../../package.json";
+import { isMobileRuntime } from "../../platform";
 
 const repositoryUrl = "https://github.com/zhtdbobo/LightTodo";
 
@@ -151,6 +152,7 @@ export function AboutPage() {
             GitHub
           </a>
         </div>
+        {!isMobileRuntime && (
         <div className="flex items-center justify-between gap-4 py-4 text-sm">
           <div>
             <span className="text-gray-500">软件更新</span>
@@ -208,6 +210,7 @@ export function AboutPage() {
             </button>
           )}
         </div>
+        )}
       </div>
 
       {openLinkError && (

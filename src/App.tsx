@@ -18,6 +18,7 @@ import { DeadlineTimeInput } from "./features/notes/components/DeadlineTimeInput
 import { SimpleMarkdown } from "./features/notes/components/SimpleMarkdown";
 import { belongsToTodayGroup, fromDateTimeLocalValue, getDeadlineStatus, toDateTimeLocalValue } from "./features/notes/utils/deadline";
 import { canClaimNoteFocus } from "./features/notes/utils/focus";
+import { isMobileRuntime } from "./platform";
 
 // 仅在开发模式下导入 react-grab
 const initReactGrab = import.meta.env.DEV
@@ -460,9 +461,11 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (window.location.hash === "#settings") {
-      setShowSettings(true);
-    }
+    const syncPageFromHash = () => {
+      setShowSettings(window.location.hash === "#settings");
+    };
+    syncPageFromHash();
+    window.addEventListener("hashchange", syncPageFromHash);
 
     // 仅在开发模式下初始化 react-grab
     if (import.meta.env.DEV && initReactGrab) {
@@ -480,6 +483,7 @@ function App() {
       };
       initGrab();
     }
+    return () => window.removeEventListener("hashchange", syncPageFromHash);
   }, []);
 
   // 点击外部关闭同步菜单和重置确认框
@@ -509,7 +513,9 @@ function App() {
       void Promise.all([loadNotes(), loadGroups()]).finally(() => {
         setIsInitialDataLoading(false);
       });
-      checkWindowPinned();
+      if (!isMobileRuntime) {
+        checkWindowPinned();
+      }
       // 启动时自动同步
       autoSyncOnStartup();
     }
@@ -2007,25 +2013,39 @@ function App() {
   return (
     <>
       {showSettings ? (
-        <SettingsPage />
+        <SettingsPage
+          onBack={isMobileRuntime ? () => {
+            window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+            setShowSettings(false);
+          } : undefined}
+        />
       ) : (
-        <div className="h-screen w-screen flex flex-col bg-white rounded-lg shadow-2xl">
+        <div className={`app-shell flex h-screen w-screen flex-col bg-white ${
+          isMobileRuntime ? "mobile-app-shell" : "rounded-lg shadow-2xl"
+        }`}>
           {/* 可拖拽的顶部区域 */}
-          <div className="flex items-center justify-between px-4 py-3 select-none flex-shrink-0" data-tauri-drag-region>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleWindowPin();
-            }}
-            className={`text-sm transition-colors cursor-pointer ${
-              isWindowPinned ? "text-cyan-500" : "text-gray-400 hover:text-cyan-400"
+          <div
+            className={`flex flex-shrink-0 select-none items-center justify-between px-4 ${
+              isMobileRuntime ? "min-h-14 py-2" : "py-3"
             }`}
-            title={isWindowPinned ? "取消窗口置顶" : "窗口置顶"}
-            style={{ WebkitAppRegion: 'no-drag' } as any}
+            data-tauri-drag-region={isMobileRuntime ? undefined : true}
           >
-            {isWindowPinned ? "📌" : "📍"}
-          </button>
+        <div className="flex items-center gap-2">
+          {!isMobileRuntime && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleWindowPin();
+              }}
+              className={`text-sm transition-colors cursor-pointer ${
+                isWindowPinned ? "text-cyan-500" : "text-gray-400 hover:text-cyan-400"
+              }`}
+              title={isWindowPinned ? "取消窗口置顶" : "窗口置顶"}
+              style={{ WebkitAppRegion: 'no-drag' } as any}
+            >
+              {isWindowPinned ? "📌" : "📍"}
+            </button>
+          )}
           <h1 className="text-sm font-medium text-gray-600">待办</h1>
         </div>
 
@@ -2053,22 +2073,24 @@ function App() {
           >
             +
           </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleCloseWindow();
-            }}
-            className="text-gray-400 hover:text-gray-600 text-base font-bold transition-colors cursor-pointer w-5 h-5 flex items-center justify-center"
-            title="隐藏到托盘"
-            style={{ WebkitAppRegion: 'no-drag' } as any}
-          >
-            ✕
-          </button>
+          {!isMobileRuntime && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCloseWindow();
+              }}
+              className="text-gray-400 hover:text-gray-600 text-base font-bold transition-colors cursor-pointer w-5 h-5 flex items-center justify-center"
+              title="隐藏到托盘"
+              style={{ WebkitAppRegion: 'no-drag' } as any}
+            >
+              ✕
+            </button>
+          )}
         </div>
       </div>
 
       {/* 待办列表区域 */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 pb-4">
+      <div className={`flex-1 overflow-y-auto overflow-x-hidden px-4 pb-4 ${isMobileRuntime ? "mobile-scroll-area" : ""}`}>
         {isInitialDataLoading ? (
           <div
             className="py-16 text-center text-xs text-gray-300"
@@ -2440,12 +2462,16 @@ function App() {
       </div>
 
       {/* 底部按钮区域 */}
-      <div className="flex items-center justify-between px-4 py-2 border-t border-gray-100 flex-shrink-0">
+      <div className={`flex flex-shrink-0 items-center justify-between border-t border-gray-100 px-4 ${isMobileRuntime ? "min-h-14 py-2" : "py-2"}`}>
         <div className="flex items-center gap-3">
           <button
             onClick={async (e) => {
               e.stopPropagation();
-              await openSettingsWindow();
+              if (isMobileRuntime) {
+                window.location.hash = "settings";
+              } else {
+                await openSettingsWindow();
+              }
             }}
             className="text-gray-400 hover:text-cyan-400 text-base transition-colors cursor-pointer"
             title="设置"

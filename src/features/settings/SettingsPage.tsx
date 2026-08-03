@@ -3,6 +3,7 @@ import { LocalBackup } from "../sync/LocalBackup";
 import { WebDAVSettings } from "../sync/WebDAVSettings";
 import { AboutPage } from "./AboutPage";
 import { GeneralSettings } from "./GeneralSettings";
+import { isMobileRuntime } from "../../platform";
 
 type SettingsSection = "general" | "sync" | "backup" | "about";
 
@@ -58,18 +59,34 @@ const navigationItems: NavigationItem[] = [
   },
 ];
 
-export function SettingsPage() {
+interface SettingsPageProps {
+  onBack?: () => void;
+}
+
+export function SettingsPage({ onBack }: SettingsPageProps) {
   const [activeSection, setActiveSection] = useState<SettingsSection>("sync");
 
   return (
-    <div className="flex h-screen min-h-0 w-screen overflow-hidden bg-gray-50 text-gray-900">
-      <aside className="flex w-44 flex-shrink-0 flex-col border-r border-gray-200 bg-white px-3 py-5">
-        <div className="px-3 pb-5">
-          <p className="text-lg font-semibold tracking-tight text-gray-900">设置</p>
-          <p className="mt-1 text-xs text-gray-400">LightTodo</p>
+    <div className={`settings-shell flex h-screen min-h-0 w-screen flex-col overflow-hidden bg-gray-50 text-gray-900 sm:flex-row ${isMobileRuntime ? "mobile-app-shell" : ""}`}>
+      <aside className="flex w-full flex-shrink-0 flex-col border-b border-gray-200 bg-white px-3 pb-2 pt-3 sm:w-44 sm:border-b-0 sm:border-r sm:py-5">
+        <div className="flex items-center gap-3 px-1 pb-3 sm:block sm:px-3 sm:pb-5">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="flex h-10 w-10 flex-shrink-0 items-center justify-center text-xl text-gray-500 sm:hidden"
+              aria-label="返回待办"
+            >
+              ‹
+            </button>
+          )}
+          <div>
+            <p className="text-lg font-semibold tracking-tight text-gray-900">设置</p>
+            <p className="mt-0.5 text-xs text-gray-400 sm:mt-1">LightTodo</p>
+          </div>
         </div>
 
-        <nav aria-label="设置导航" className="space-y-1" role="tablist">
+        <nav aria-label="设置导航" className="flex gap-1 overflow-x-auto sm:block sm:space-y-1" role="tablist">
           {navigationItems.map((item) => {
             const isActive = activeSection === item.id;
             return (
@@ -80,7 +97,7 @@ export function SettingsPage() {
                 aria-selected={isActive}
                 aria-controls={`settings-panel-${item.id}`}
                 onClick={() => setActiveSection(item.id)}
-                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${
+                className={`flex min-h-11 flex-shrink-0 items-center gap-2 rounded-lg px-3 py-2.5 text-left transition-colors sm:w-full sm:gap-3 ${
                   isActive
                     ? "bg-cyan-50 text-cyan-700"
                     : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"

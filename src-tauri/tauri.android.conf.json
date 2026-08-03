@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.0",
+  "identifier": "com.lighttodo.app",
+  "bundle": {
+    "active": true,
+    "android": {
+      "minSdkVersion": 24
+    }
+  }
+}
