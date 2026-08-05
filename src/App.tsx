@@ -2015,12 +2015,7 @@ function App() {
   return (
     <>
       {showSettings ? (
-        <SettingsPage
-          onBack={isMobileRuntime ? () => {
-            window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-            setShowSettings(false);
-          } : undefined}
-        />
+        <SettingsPage />
       ) : (
         <div className={`app-shell flex h-screen w-screen flex-col bg-white ${
           isMobileRuntime ? "mobile-app-shell" : "rounded-lg shadow-2xl"

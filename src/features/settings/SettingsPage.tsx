@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { LocalBackup } from "../sync/LocalBackup";
 import { WebDAVSettings } from "../sync/WebDAVSettings";
 import { AboutPage } from "./AboutPage";
@@ -59,61 +59,140 @@ const navigationItems: NavigationItem[] = [
   },
 ];
 
-interface SettingsPageProps {
-  onBack?: () => void;
+interface SettingsNavigationProps {
+  activeSection: SettingsSection;
+  onSelect: (section: SettingsSection) => void;
+  tabIndex?: number;
 }
 
-export function SettingsPage({ onBack }: SettingsPageProps) {
+function SettingsNavigation({ activeSection, onSelect, tabIndex }: SettingsNavigationProps) {
+  return (
+    <nav aria-label="设置导航" className="flex flex-col gap-1" role="tablist">
+      {navigationItems.map((item) => {
+        const isActive = activeSection === item.id;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            role="tab"
+            tabIndex={tabIndex}
+            aria-selected={isActive}
+            aria-controls={`settings-panel-${item.id}`}
+            onClick={() => onSelect(item.id)}
+            className={`flex min-h-12 w-full items-center gap-3 rounded-xl px-4 py-3 text-left transition-colors ${
+              isActive
+                ? "bg-cyan-50 text-cyan-700"
+                : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+            }`}
+          >
+            <span className={isActive ? "text-cyan-600" : "text-gray-400"}>
+              {item.icon}
+            </span>
+            <span className="min-w-0 truncate text-sm font-medium">{item.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+function MenuIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+      <path strokeLinecap="round" d="M4 6h16M4 12h16M4 18h16" />
+    </svg>
+  );
+}
+
+export function SettingsPage() {
   const [activeSection, setActiveSection] = useState<SettingsSection>("sync");
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isDrawerOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsDrawerOpen(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isDrawerOpen]);
+
+  const handleSectionSelect = (section: SettingsSection) => {
+    setActiveSection(section);
+    if (isMobileRuntime) setIsDrawerOpen(false);
+  };
+
+  const activeLabel = navigationItems.find((item) => item.id === activeSection)?.label ?? "设置";
 
   return (
-    <div className={`settings-shell flex h-screen min-h-0 w-screen flex-row overflow-hidden bg-gray-50 text-gray-900 ${isMobileRuntime ? "mobile-app-shell" : ""}`}>
-      <aside className="flex w-16 flex-shrink-0 flex-col border-r border-gray-200 bg-white py-3 sm:w-44 sm:py-5">
-        <div className="flex flex-col items-center gap-2 px-1 pb-3 sm:block sm:px-3 sm:pb-5">
-          {onBack && (
-            <button
-              type="button"
-              onClick={onBack}
-              className="flex h-10 w-10 flex-shrink-0 items-center justify-center text-xl text-gray-500 sm:hidden"
-              aria-label="返回待办"
-            >
-              ‹
-            </button>
-          )}
-          <div className="hidden sm:block">
+    <div
+      className={`settings-shell relative flex h-screen min-h-0 w-screen overflow-hidden bg-gray-50 text-gray-900 ${isMobileRuntime ? "mobile-app-shell flex-col" : "flex-row"}`}
+    >
+      {isMobileRuntime ? (
+        <>
+          <header className="flex min-h-14 flex-shrink-0 items-center border-b border-gray-200 bg-white px-5">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-base font-semibold text-gray-900">{activeLabel}</p>
+            </div>
+          </header>
+
+          <button
+            type="button"
+            aria-label="点击遮罩关闭设置菜单"
+            tabIndex={isDrawerOpen ? 0 : -1}
+            onClick={() => setIsDrawerOpen(false)}
+            className={`absolute inset-0 z-30 bg-black/30 transition-opacity duration-200 ${
+              isDrawerOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+            }`}
+          />
+
+          <aside
+            id="settings-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label="设置菜单"
+            aria-hidden={!isDrawerOpen}
+            className={`settings-drawer-safe-area absolute bottom-0 left-0 top-0 z-40 flex w-[min(68vw,15rem)] flex-col bg-white shadow-2xl transition-transform duration-200 ease-out ${
+              isDrawerOpen ? "translate-x-0" : "-translate-x-full"
+            }`}
+          >
+            <div className="border-b border-gray-100 px-5 pb-5">
+              <p className="text-lg font-semibold text-gray-900">设置</p>
+              <p className="mt-1 text-xs text-gray-400">LightTodo</p>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3">
+              <SettingsNavigation
+                activeSection={activeSection}
+                onSelect={handleSectionSelect}
+                tabIndex={isDrawerOpen ? 0 : -1}
+              />
+            </div>
+          </aside>
+
+          <button
+            type="button"
+            onClick={() => setIsDrawerOpen((open) => !open)}
+            className="settings-drawer-toggle absolute z-50 flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-gray-600 shadow-lg ring-1 ring-gray-200 transition-colors active:bg-gray-100"
+            aria-label={isDrawerOpen ? "关闭设置菜单" : "打开设置菜单"}
+            aria-controls="settings-drawer"
+            aria-expanded={isDrawerOpen}
+          >
+            <MenuIcon />
+          </button>
+        </>
+      ) : (
+        <aside className="flex w-44 flex-shrink-0 flex-col border-r border-gray-200 bg-white py-5">
+          <div className="px-5 pb-5">
             <p className="text-lg font-semibold tracking-tight text-gray-900">设置</p>
-            <p className="mt-0.5 text-xs text-gray-400">LightTodo</p>
+            <p className="mt-1 text-xs text-gray-400">LightTodo</p>
           </div>
-        </div>
+          <div className="px-3">
+            <SettingsNavigation activeSection={activeSection} onSelect={handleSectionSelect} />
+          </div>
+        </aside>
+      )}
 
-        <nav aria-label="设置导航" className="flex flex-col gap-1 px-1 sm:px-3" role="tablist">
-          {navigationItems.map((item) => {
-            const isActive = activeSection === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                role="tab"
-                aria-selected={isActive}
-                aria-controls={`settings-panel-${item.id}`}
-                onClick={() => setActiveSection(item.id)}
-                className={`flex min-h-11 flex-shrink-0 flex-col items-center justify-center gap-1 rounded-lg px-2 py-2 text-center transition-colors sm:flex-row sm:gap-3 sm:px-3 sm:text-left ${
-                  isActive
-                    ? "bg-cyan-50 text-cyan-700"
-                    : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"
-                }`}
-              >
-                <span className={isActive ? "text-cyan-600" : "text-gray-400"}>
-                  {item.icon}
-                </span>
-                <span className="min-w-0 truncate text-[11px] font-medium leading-none sm:text-sm sm:leading-snug">{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-      </aside>
-
-      <main className="min-w-0 flex-1 overflow-y-auto">
+      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
         <section
           id={`settings-panel-${activeSection}`}
           role="tabpanel"
@@ -135,7 +214,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
           ) : activeSection === "backup" ? (
             <div className="mx-auto w-full max-w-2xl p-8">
               <div className="mb-7">
-                <h2 className="text-2xl font-semibold tracking-tight text-gray-900">备份</h2>
+                <h2 className="settings-content-title text-2xl font-semibold tracking-tight text-gray-900">备份</h2>
               </div>
               <LocalBackup />
             </div>

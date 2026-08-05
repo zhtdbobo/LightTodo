@@ -2,6 +2,31 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)规范。
 
+## [0.3.2] - 2026-08-05
+
+### 主要功能
+
+- Android 平台：新增移动端构建支持、本地安全存储适配和 ARM64 APK 发布产物
+- 移动端设置：采用左下角三横按钮控制的抽屉菜单，支持常规、同步、备份和关于页面切换
+- 移动端界面：增大主页字号、优化安全区间距并隐藏滚动条，提升手机端可读性
+- 应用图标：统一生成 Windows、macOS、iOS 和 Android 图标，使用透明背景的青色灯泡标识
+
+### 修复与改进
+
+- 修复移动端切换设置页时同步提示定时器被提前清除、提示无法自动消失的问题
+- 同步提示支持点击关闭，并优化移动端主页左右边距
+- 设置页移除重复标题、返回按钮和滑动抽屉手势，精简移动端导航结构
+- Android 自适应图标增加安全留白，避免启动器遮罩裁切灯泡主体
+
+### 发布说明
+
+- `v0.3.2` 为 LightTodo 的 Android 支持与移动端体验版本
+- Release 提供 Windows x64 安装包、macOS 通用架构 DMG 和 Android ARM64 APK
+- Android APK 适用于 Android 7.0（API 24）及以上 ARM64 设备
+- 本版本未改变数据库结构和 WebDAV 同步协议
+
+---
+
 ## [0.3.1] - 2026-08-03
 
 ### 主要功能
@@ -238,4 +263,5 @@
 [0.2.7]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.7
 [0.2.8]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.8
 [0.2.9]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.9
+[0.3.2]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.3.2
 [0.1.0]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.1.0

@@ -99,7 +99,7 @@ export function WebDAVSettings() {
   return (
     <div className="mx-auto w-full max-w-2xl p-8">
       <div className="mb-7">
-        <h2 className="text-2xl font-semibold tracking-tight text-gray-900">同步</h2>
+        <h2 className="settings-content-title text-2xl font-semibold tracking-tight text-gray-900">同步</h2>
         <p className="mt-1 text-sm text-gray-500">配置 WebDAV，让待办数据安全地在设备间同步。</p>
       </div>
 

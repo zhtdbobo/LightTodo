@@ -41,7 +41,7 @@ export function GeneralSettings() {
   return (
     <div className="mx-auto max-w-2xl px-8 py-8">
       <div className="mb-7">
-        <h1 className="text-xl font-semibold text-gray-900">常规</h1>
+        <h1 className="settings-content-title text-xl font-semibold text-gray-900">常规</h1>
         <p className="mt-1 text-sm text-gray-500">调整窗口每次打开时的显示方式。</p>
       </div>
 

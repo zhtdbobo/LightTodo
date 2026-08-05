@@ -36,6 +36,20 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 
+.settings-drawer-safe-area {
+  padding-top: calc(env(safe-area-inset-top, 0px) + 1.5rem);
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 4.75rem);
+}
+
+.settings-drawer-toggle {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem);
+  left: calc(env(safe-area-inset-left, 0px) + 1rem);
+}
+
+.mobile-app-shell .settings-content-title {
+  display: none;
+}
+
 @media (hover: none), (pointer: coarse) {
   button,
   input,
@@ -82,6 +96,32 @@ body {
   }
   .mobile-app-shell .text-xl {
     font-size: 24px;
+  }
+
+  /* 首页比设置页再放大一级，确保待办正文、分组标题和辅助信息清晰可读。 */
+  .app-shell.mobile-app-shell .text-\[9px\] {
+    font-size: 13px;
+  }
+  .app-shell.mobile-app-shell .text-\[10px\] {
+    font-size: 14px;
+  }
+  .app-shell.mobile-app-shell .text-\[11px\] {
+    font-size: 15px;
+  }
+  .app-shell.mobile-app-shell .text-xs {
+    font-size: 16px;
+  }
+  .app-shell.mobile-app-shell .text-\[13px\] {
+    font-size: 17px;
+  }
+  .app-shell.mobile-app-shell .text-sm {
+    font-size: 18px;
+  }
+  .app-shell.mobile-app-shell .text-base {
+    font-size: 20px;
+  }
+  .app-shell.mobile-app-shell .text-xl {
+    font-size: 26px;
   }
 }
 
