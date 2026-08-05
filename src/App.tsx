@@ -691,6 +691,8 @@ function App() {
   }, [showSettings]);
 
   // 组件卸载时清理定时器
+  // 注意:依赖须为 [],否则在移动端打开/关闭设置页(showSettings 翻转)时
+  // cleanup 会提前清除 syncMessageTimerRef,导致同步 toast 永不消失。
   useEffect(() => {
     return () => {
       if (autoSyncInterval.current) {
@@ -709,7 +711,7 @@ function App() {
         syncMessageTimerRef.current = null;
       }
     };
-  }, [showSettings]);
+  }, []);
 
   const loadNotes = async () => {
     const requestId = ++loadNotesRequestRef.current;
@@ -2025,7 +2027,7 @@ function App() {
         }`}>
           {/* 可拖拽的顶部区域 */}
           <div
-            className={`flex flex-shrink-0 select-none items-center justify-between px-4 ${
+            className={`flex flex-shrink-0 select-none items-center justify-between ${isMobileRuntime ? "px-5" : "px-4"} ${
               isMobileRuntime ? "min-h-14 py-2" : "py-3"
             }`}
             data-tauri-drag-region={isMobileRuntime ? undefined : true}
@@ -2090,7 +2092,7 @@ function App() {
       </div>
 
       {/* 待办列表区域 */}
-      <div className={`flex-1 overflow-y-auto overflow-x-hidden px-4 pb-4 ${isMobileRuntime ? "mobile-scroll-area" : ""}`}>
+      <div className={`flex-1 overflow-y-auto overflow-x-hidden ${isMobileRuntime ? "px-5" : "px-4"} pb-4 ${isMobileRuntime ? "mobile-scroll-area" : ""}`}>
         {isInitialDataLoading ? (
           <div
             className="py-16 text-center text-xs text-gray-300"
@@ -2462,7 +2464,7 @@ function App() {
       </div>
 
       {/* 底部按钮区域 */}
-      <div className={`flex flex-shrink-0 items-center justify-between border-t border-gray-100 px-4 ${isMobileRuntime ? "min-h-14 py-2" : "py-2"}`}>
+      <div className={`flex flex-shrink-0 items-center justify-between border-t border-gray-100 ${isMobileRuntime ? "px-5" : "px-4"} ${isMobileRuntime ? "min-h-14 py-2" : "py-2"}`}>
         <div className="flex items-center gap-3">
           <button
             onClick={async (e) => {
@@ -2621,7 +2623,16 @@ function App() {
       {/* 同步消息提示 */}
       {syncMessage && (
         <div className="absolute bottom-14 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
-          <div className="max-w-full min-w-0 px-4 py-2 bg-gray-800 text-white text-xs leading-relaxed text-center rounded-md shadow-lg whitespace-normal break-words pointer-events-auto">
+          <div
+            onClick={() => {
+              if (syncMessageTimerRef.current !== null) {
+                clearTimeout(syncMessageTimerRef.current);
+                syncMessageTimerRef.current = null;
+              }
+              setSyncMessage("");
+            }}
+            className="max-w-full min-w-0 px-4 py-2 bg-gray-800 text-white text-xs leading-relaxed text-center rounded-md shadow-lg whitespace-normal break-words pointer-events-auto cursor-pointer"
+          >
             {syncMessage}
           </div>
         </div>

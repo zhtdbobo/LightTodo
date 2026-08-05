@@ -47,6 +47,42 @@ body {
   .group .opacity-0 {
     opacity: 1;
   }
+
+  /* 移动端隐藏滚动条(首页右侧垂直滚动条等),保留滚动功能 */
+  ::-webkit-scrollbar {
+    display: none;
+  }
+  * {
+    scrollbar-width: none;
+  }
+
+  /* 移动端整体放大小号字体与图标字号,提升可读性。
+     利用 .mobile-app-shell 后代选择器特异性(0,0,2,0)高于单个 Tailwind 工具类,
+     无需 !important;仅作用于移动端外壳内,不影响桌面端。 */
+  .mobile-app-shell .text-\[9px\] {
+    font-size: 11px;
+  }
+  .mobile-app-shell .text-\[10px\] {
+    font-size: 12px;
+  }
+  .mobile-app-shell .text-\[11px\] {
+    font-size: 13px;
+  }
+  .mobile-app-shell .text-xs {
+    font-size: 14px;
+  }
+  .mobile-app-shell .text-\[13px\] {
+    font-size: 15px;
+  }
+  .mobile-app-shell .text-sm {
+    font-size: 16px;
+  }
+  .mobile-app-shell .text-base {
+    font-size: 18px;
+  }
+  .mobile-app-shell .text-xl {
+    font-size: 24px;
+  }
 }
 
 /* 隐藏滚动条但保持功能 */
