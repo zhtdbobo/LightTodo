@@ -13,3 +13,28 @@ export const canClaimNoteFocus = (
     || (activeElement instanceof HTMLElement
       && Boolean(activeElement.closest(noteCreateButtonSelector)));
 };
+
+export const hasSelectedTextWithin = (
+  element: HTMLElement,
+  selection: Selection | null = window.getSelection()
+) => {
+  if (!selection || selection.isCollapsed || selection.toString().length === 0) {
+    return false;
+  }
+
+  return (selection.anchorNode !== null && element.contains(selection.anchorNode))
+    || (selection.focusNode !== null && element.contains(selection.focusNode));
+};
+
+export const hasExceededClickMovement = (
+  startX: number,
+  startY: number,
+  currentX: number,
+  currentY: number,
+  tolerance = 3
+) => {
+  const deltaX = currentX - startX;
+  const deltaY = currentY - startY;
+
+  return deltaX * deltaX + deltaY * deltaY > tolerance * tolerance;
+};

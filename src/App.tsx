@@ -17,7 +17,11 @@ import { formatTimestamp, calculateDuration } from "./features/notes/utils/timeF
 import { DeadlineTimeInput } from "./features/notes/components/DeadlineTimeInput";
 import { SimpleMarkdown } from "./features/notes/components/SimpleMarkdown";
 import { belongsToTodayGroup, fromDateTimeLocalValue, getDeadlineStatus, toDateTimeLocalValue } from "./features/notes/utils/deadline";
-import { canClaimNoteFocus } from "./features/notes/utils/focus";
+import {
+  canClaimNoteFocus,
+  hasExceededClickMovement,
+  hasSelectedTextWithin,
+} from "./features/notes/utils/focus";
 import { isMobileRuntime } from "./platform";
 
 // 仅在开发模式下导入 react-grab
@@ -1184,6 +1188,10 @@ function App() {
     );
     const composingRef = useRef(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const previewMouseGestureRef = useRef<{
+      startX: number;
+      startY: number;
+    } | null>(null);
     const [showMenu, setShowMenu] = useState(false);
     const [showGroupInput, setShowGroupInput] = useState(false);
     const [deadlineDraftValue, setDeadlineDraftValue] = useState(toDateTimeLocalValue(note.deadline));
@@ -1290,6 +1298,29 @@ function App() {
       // 把用户已经重新输入的内容关闭或删除。
       editSessionRef.current += 1;
       setIsEditing(true);
+    };
+
+    const handlePreviewMouseDown = (event: ReactMouseEvent<HTMLDivElement>) => {
+      previewMouseGestureRef.current = event.button === 0
+        ? { startX: event.clientX, startY: event.clientY }
+        : null;
+    };
+
+    const shouldKeepPreviewSelection = (
+      element: HTMLDivElement,
+      clientX: number,
+      clientY: number
+    ) => {
+      const gesture = previewMouseGestureRef.current;
+      previewMouseGestureRef.current = null;
+      const wasDrag = gesture !== null && hasExceededClickMovement(
+        gesture.startX,
+        gesture.startY,
+        clientX,
+        clientY
+      );
+
+      return wasDrag || hasSelectedTextWithin(element);
     };
 
     const handleLocalBlur = async () => {
@@ -1542,7 +1573,15 @@ function App() {
               <div
                 role="button"
                 tabIndex={0}
-                onClick={beginEditing}
+                onMouseDown={handlePreviewMouseDown}
+                onClick={(event) => {
+                  if (shouldKeepPreviewSelection(
+                    event.currentTarget,
+                    event.clientX,
+                    event.clientY
+                  )) return;
+                  beginEditing();
+                }}
                 onDoubleClick={beginEditing}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === "F2") {
@@ -1627,7 +1666,14 @@ function App() {
             <div
               role="button"
               tabIndex={0}
-              onClick={() => {
+              onMouseDown={handlePreviewMouseDown}
+              onClick={(event) => {
+                if (shouldKeepPreviewSelection(
+                  event.currentTarget,
+                  event.clientX,
+                  event.clientY
+                )) return;
+
                 if (note.isCompleted) {
                   setIsExpanded(!isExpanded);
                   return;
