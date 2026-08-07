@@ -39,4 +39,14 @@ describe("SettingsPage mobile drawer", () => {
 
     expect(screen.getByRole("button", { name: "打开设置菜单" })).toHaveAttribute("aria-expanded", "false");
   });
+
+  it("通过顶部关闭按钮返回待办首页", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "settings";
+    render(<SettingsPage />);
+
+    await user.click(screen.getByRole("button", { name: "关闭设置" }));
+
+    expect(window.location.hash).toBe("");
+  });
 });

@@ -36,6 +36,18 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 
+.app-shell.mobile-app-shell .simple-markdown-preview,
+.app-shell.mobile-app-shell textarea[data-note-id] {
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.mobile-group-drag-handle {
+  touch-action: none;
+  user-select: none;
+}
+
 .settings-drawer-safe-area {
   padding-top: calc(env(safe-area-inset-top, 0px) + 1.5rem);
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 4.75rem);

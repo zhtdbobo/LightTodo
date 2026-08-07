@@ -2,6 +2,27 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)规范。
 
+## [0.3.3] - 2026-08-07
+
+### 主要功能
+
+- 移动端待办：支持长按选择和系统复制菜单，避免长按误触发编辑
+- WebDAV 密码：支持系统原生长按粘贴，并优化移动端密码输入属性
+- 移动端同步：首次启动拉取完成后立即刷新待办和分组列表
+- 移动端分组：支持触摸拖动调整分组顺序
+
+### 修复与改进
+
+- 修复首次从设置页返回时数据未及时初始化的问题
+- 保留桌面端原有右键行为，同时开放移动端文本编辑菜单
+
+### 发布说明
+
+- `v0.3.3` 是移动端交互与首次同步可见性修复版本
+- 在 `v0.3.2` 基础上完善待办复制、WebDAV 密码粘贴和分组排序体验
+
+---
+
 ## [0.3.2] - 2026-08-05
 
 ### 主要功能
@@ -263,5 +284,6 @@
 [0.2.7]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.7
 [0.2.8]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.8
 [0.2.9]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.2.9
+[0.3.3]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.3.3
 [0.3.2]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.3.2
 [0.1.0]: https://github.com/zhtdbobo/LightTodo/releases/tag/v0.1.0

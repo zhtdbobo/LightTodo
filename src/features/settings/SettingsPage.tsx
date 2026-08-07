@@ -134,6 +134,17 @@ export function SettingsPage() {
             <div className="min-w-0 flex-1">
               <p className="truncate text-base font-semibold text-gray-900">{activeLabel}</p>
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                window.location.hash = "";
+              }}
+              className="inline-flex h-10 w-10 flex-shrink-0 items-center justify-center text-xl text-gray-500 active:text-gray-900"
+              aria-label="关闭设置"
+              title="关闭设置"
+            >
+              ✕
+            </button>
           </header>
 
           <button

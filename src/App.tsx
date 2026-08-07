@@ -4,6 +4,8 @@ import {
   useLayoutEffect,
   useRef,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type TouchEvent as ReactTouchEvent,
   type ReactNode,
 } from "react";
 import { useNotesStore } from "./features/notes/stores/notesStore";
@@ -22,6 +24,7 @@ import {
   hasExceededClickMovement,
   hasSelectedTextWithin,
 } from "./features/notes/utils/focus";
+import { moveGroupToTarget } from "./features/notes/utils/groupOrder";
 import { isMobileRuntime } from "./platform";
 
 // 仅在开发模式下导入 react-grab
@@ -69,6 +72,9 @@ const openSettingsWindow = async () => {
 
 const SYNC_SUCCESS_MESSAGE_MS = 5000;
 const SYNC_ERROR_MESSAGE_MS = 6000;
+const MOBILE_SYNC_SUCCESS_MESSAGE_MS = 2500;
+const MOBILE_SYNC_ERROR_MESSAGE_MS = 3500;
+const MOBILE_LONG_PRESS_MS = 450;
 
 const groupNameCollator = new Intl.Collator("zh-CN", {
   sensitivity: "base",
@@ -146,6 +152,12 @@ interface GroupTitleProps {
   onMoveDown: () => void;
   canMoveUp: boolean;
   canMoveDown: boolean;
+  isDragging: boolean;
+  isDragTarget: boolean;
+  onDragStart: (groupId: string) => void;
+  onDragMove: (clientX: number, clientY: number) => void;
+  onDragEnd: () => void;
+  onDragCancel: () => void;
 }
 
 const GroupTitle = ({
@@ -160,6 +172,12 @@ const GroupTitle = ({
   onMoveDown,
   canMoveUp,
   canMoveDown,
+  isDragging,
+  isDragTarget,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+  onDragCancel,
 }: GroupTitleProps) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(group.name);
@@ -188,7 +206,9 @@ const GroupTitle = ({
   };
 
   return (
-    <div className="mb-2 -ml-2 flex items-center justify-between group rounded py-0.5 transition-colors">
+    <div className={`mb-2 -ml-2 flex items-center justify-between group rounded py-0.5 transition-colors ${
+      isDragging ? "opacity-50" : isDragTarget ? "bg-cyan-50 ring-1 ring-cyan-200" : ""
+    }`}>
       <div
         className="flex items-center gap-1.5 min-w-0 flex-1 text-[13px] text-gray-600"
         style={groupTitleFont}
@@ -246,26 +266,54 @@ const GroupTitle = ({
         )}
       </div>
       <div className="flex items-center gap-1.5">
-        <button
-          type="button"
-          onClick={onMoveUp}
-          disabled={!canMoveUp}
-          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-cyan-500 disabled:text-gray-200 disabled:hover:text-gray-200 text-xs transition-opacity"
-          title="上移分组"
-          aria-label={`上移分组 ${group.name}`}
-        >
-          ↑
-        </button>
-        <button
-          type="button"
-          onClick={onMoveDown}
-          disabled={!canMoveDown}
-          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-cyan-500 disabled:text-gray-200 disabled:hover:text-gray-200 text-xs transition-opacity"
-          title="下移分组"
-          aria-label={`下移分组 ${group.name}`}
-        >
-          ↓
-        </button>
+        {isMobileRuntime ? (
+          <button
+            type="button"
+            onPointerDown={(event: ReactPointerEvent<HTMLButtonElement>) => {
+              if (event.pointerType === "mouse" && event.button !== 0) return;
+              event.currentTarget.setPointerCapture(event.pointerId);
+              onDragStart(group.id);
+            }}
+            onPointerMove={(event: ReactPointerEvent<HTMLButtonElement>) => {
+              onDragMove(event.clientX, event.clientY);
+            }}
+            onPointerUp={(event: ReactPointerEvent<HTMLButtonElement>) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }
+              onDragEnd();
+            }}
+            onPointerCancel={onDragCancel}
+            className="mobile-group-drag-handle inline-flex h-8 w-8 flex-shrink-0 touch-none items-center justify-center text-lg text-gray-400 active:text-cyan-600"
+            title="拖动分组"
+            aria-label={`拖动分组 ${group.name}`}
+          >
+            ⠿
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={onMoveUp}
+              disabled={!canMoveUp}
+              className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-cyan-500 disabled:text-gray-200 disabled:hover:text-gray-200 text-xs transition-opacity"
+              title="上移分组"
+              aria-label={`上移分组 ${group.name}`}
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              onClick={onMoveDown}
+              disabled={!canMoveDown}
+              className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-cyan-500 disabled:text-gray-200 disabled:hover:text-gray-200 text-xs transition-opacity"
+              title="下移分组"
+              aria-label={`下移分组 ${group.name}`}
+            >
+              ↓
+            </button>
+          </>
+        )}
         <button
           type="button"
           onClick={onAdd}
@@ -392,6 +440,12 @@ function App() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [isCompletedExpanded, setIsCompletedExpanded] = useState(false);
   const isReorderingGroupsRef = useRef(false);
+  const [mobileGroupDrag, setMobileGroupDrag] = useState<{
+    sourceId: string;
+    overId: string;
+  } | null>(null);
+  const mobileGroupDragRef = useRef(mobileGroupDrag);
+  mobileGroupDragRef.current = mobileGroupDrag;
   const [passwordLength, setPasswordLength] = useState(16);
   const [passwordCharTypes, setPasswordCharTypes] = useState<PasswordCharType[]>([
     "upper",
@@ -452,10 +506,15 @@ function App() {
       clearTimeout(syncMessageTimerRef.current);
     }
     setSyncMessage(message);
+    const visibleDuration = isMobileRuntime
+      ? Math.min(duration, message.startsWith("同步失败")
+        ? MOBILE_SYNC_ERROR_MESSAGE_MS
+        : MOBILE_SYNC_SUCCESS_MESSAGE_MS)
+      : duration;
     syncMessageTimerRef.current = window.setTimeout(() => {
       syncMessageTimerRef.current = null;
       setSyncMessage("");
-    }, duration);
+    }, visibleDuration);
   };
 
   // 检查是否是设置页面
@@ -523,7 +582,7 @@ function App() {
       // 启动时自动同步
       autoSyncOnStartup();
     }
-  }, []);
+  }, [showSettings]);
 
   const autoSyncOnStartup = async () => {
     try {
@@ -787,6 +846,30 @@ function App() {
     }
   };
 
+  const reloadAfterSync = async () => {
+    if (!isMobileRuntime) {
+      await Promise.all([loadNotes(), loadGroups()]);
+      return;
+    }
+
+    const notesRequestId = ++loadNotesRequestRef.current;
+    const groupsRequestId = ++loadGroupsRequestRef.current;
+    const [allNotes, allGroups] = await Promise.all([getAllNotes(), getAllGroups()]);
+    if (
+      notesRequestId !== loadNotesRequestRef.current
+      || groupsRequestId !== loadGroupsRequestRef.current
+    ) return;
+
+    locallyDeletedNoteIdsRef.current.clear();
+    locallyDeletedGroupIdsRef.current.clear();
+    setNotes(allNotes);
+    setGroups(sortGroupsByDisplayOrder(allGroups));
+    // A startup sync may finish before the initial local reads settle. Make
+    // the freshly pulled snapshot visible immediately instead of leaving the
+    // mobile list behind its initial loading state.
+    setIsInitialDataLoading(false);
+  };
+
   const handleRenameGroup = async (groupId: string, newName: string) => {
     if (!newName.trim()) return;
     markGroupsMutation();
@@ -811,7 +894,7 @@ function App() {
       const result = await operation();
       showTimedSyncMessage(result, SYNC_SUCCESS_MESSAGE_MS);
       if (reload) {
-        await Promise.all([loadNotes(), loadGroups()]);
+        await reloadAfterSync();
       }
     } catch (error) {
       showTimedSyncMessage(`同步失败: ${error}`, SYNC_ERROR_MESSAGE_MS);
@@ -842,29 +925,8 @@ function App() {
     });
   };
 
-  const handleMoveGroup = async (groupId: string, offset: -1 | 1) => {
+  const persistGroupOrder = async (orderedGroups: Group[]) => {
     if (isReorderingGroupsRef.current) return;
-
-    const visibleGroupIds = groups
-      .filter((group) => notes.some((note) => note.groupId === group.id && note.deadline == null && !note.isCompleted))
-      .map((group) => group.id);
-    const currentVisibleIndex = visibleGroupIds.indexOf(groupId);
-    const targetGroupId = visibleGroupIds[currentVisibleIndex + offset];
-    if (currentVisibleIndex < 0 || !targetGroupId) return;
-
-    const currentIndex = groups.findIndex((group) => group.id === groupId);
-    const targetIndex = groups.findIndex((group) => group.id === targetGroupId);
-    if (currentIndex < 0 || targetIndex < 0) return;
-
-    const nextGroups = [...groups];
-    [nextGroups[currentIndex], nextGroups[targetIndex]] = [
-      nextGroups[targetIndex],
-      nextGroups[currentIndex],
-    ];
-    const orderedGroups = nextGroups.map((group, index) => ({
-      ...group,
-      displayOrder: index,
-    }));
 
     markGroupsMutation();
     isReorderingGroupsRef.current = true;
@@ -891,6 +953,57 @@ function App() {
       await loadGroups();
     } finally {
       isReorderingGroupsRef.current = false;
+    }
+  };
+
+  const handleMoveGroupTo = async (groupId: string, targetGroupId: string) => {
+    const orderedGroups = moveGroupToTarget(groups, groupId, targetGroupId);
+    if (orderedGroups === groups) return;
+    await persistGroupOrder(orderedGroups);
+  };
+
+  const handleMoveGroup = async (groupId: string, offset: -1 | 1) => {
+    const visibleGroupIds = groups
+      .filter((group) => notes.some((note) => note.groupId === group.id && note.deadline == null && !note.isCompleted))
+      .map((group) => group.id);
+    const currentVisibleIndex = visibleGroupIds.indexOf(groupId);
+    const targetGroupId = visibleGroupIds[currentVisibleIndex + offset];
+    if (currentVisibleIndex < 0 || !targetGroupId) return;
+
+    await handleMoveGroupTo(groupId, targetGroupId);
+  };
+
+  const handleMobileGroupDragStart = (groupId: string) => {
+    if (!isMobileRuntime || isReorderingGroupsRef.current) return;
+    const next = { sourceId: groupId, overId: groupId };
+    mobileGroupDragRef.current = next;
+    setMobileGroupDrag(next);
+  };
+
+  const handleMobileGroupDragMove = (clientX: number, clientY: number) => {
+    const current = mobileGroupDragRef.current;
+    if (!current) return;
+    const target = document
+      .elementFromPoint(clientX, clientY)
+      ?.closest<HTMLElement>("[data-mobile-group-id]")
+      ?.dataset.mobileGroupId;
+    if (!target || target === current.overId) return;
+
+    const next = { ...current, overId: target };
+    mobileGroupDragRef.current = next;
+    setMobileGroupDrag(next);
+  };
+
+  const clearMobileGroupDrag = () => {
+    mobileGroupDragRef.current = null;
+    setMobileGroupDrag(null);
+  };
+
+  const handleMobileGroupDragEnd = () => {
+    const completedDrag = mobileGroupDragRef.current;
+    clearMobileGroupDrag();
+    if (completedDrag && completedDrag.sourceId !== completedDrag.overId) {
+      void handleMoveGroupTo(completedDrag.sourceId, completedDrag.overId);
     }
   };
 
@@ -1192,6 +1305,12 @@ function App() {
       startX: number;
       startY: number;
     } | null>(null);
+    const previewTouchGestureRef = useRef<{
+      startX: number;
+      startY: number;
+      startedAt: number;
+      suppressNextClick: boolean;
+    } | null>(null);
     const [showMenu, setShowMenu] = useState(false);
     const [showGroupInput, setShowGroupInput] = useState(false);
     const [deadlineDraftValue, setDeadlineDraftValue] = useState(toDateTimeLocalValue(note.deadline));
@@ -1306,6 +1425,38 @@ function App() {
         : null;
     };
 
+    const handlePreviewTouchStart = (event: ReactTouchEvent<HTMLDivElement>) => {
+      const touch = event.touches[0];
+      if (!touch) return;
+      previewTouchGestureRef.current = {
+        startX: touch.clientX,
+        startY: touch.clientY,
+        startedAt: Date.now(),
+        suppressNextClick: false,
+      };
+    };
+
+    const handlePreviewTouchMove = (event: ReactTouchEvent<HTMLDivElement>) => {
+      const gesture = previewTouchGestureRef.current;
+      const touch = event.touches[0];
+      if (!gesture || !touch || gesture.suppressNextClick) return;
+      gesture.suppressNextClick = hasExceededClickMovement(
+        gesture.startX,
+        gesture.startY,
+        touch.clientX,
+        touch.clientY,
+        6
+      );
+    };
+
+    const finishPreviewTouch = (element: HTMLDivElement) => {
+      const gesture = previewTouchGestureRef.current;
+      if (!gesture) return;
+      gesture.suppressNextClick = gesture.suppressNextClick
+        || Date.now() - gesture.startedAt >= MOBILE_LONG_PRESS_MS
+        || hasSelectedTextWithin(element);
+    };
+
     const shouldKeepPreviewSelection = (
       element: HTMLDivElement,
       clientX: number,
@@ -1320,7 +1471,11 @@ function App() {
         clientY
       );
 
-      return wasDrag || hasSelectedTextWithin(element);
+      const wasMobileSelectionGesture = isMobileRuntime
+        && (previewTouchGestureRef.current?.suppressNextClick ?? false);
+      previewTouchGestureRef.current = null;
+
+      return wasDrag || wasMobileSelectionGesture || hasSelectedTextWithin(element);
     };
 
     const handleLocalBlur = async () => {
@@ -1574,6 +1729,14 @@ function App() {
                 role="button"
                 tabIndex={0}
                 onMouseDown={handlePreviewMouseDown}
+                onTouchStart={isMobileRuntime ? handlePreviewTouchStart : undefined}
+                onTouchMove={isMobileRuntime ? handlePreviewTouchMove : undefined}
+                onTouchEnd={isMobileRuntime
+                  ? (event) => finishPreviewTouch(event.currentTarget)
+                  : undefined}
+                onTouchCancel={isMobileRuntime
+                  ? (event) => finishPreviewTouch(event.currentTarget)
+                  : undefined}
                 onClick={(event) => {
                   if (shouldKeepPreviewSelection(
                     event.currentTarget,
@@ -1667,6 +1830,14 @@ function App() {
               role="button"
               tabIndex={0}
               onMouseDown={handlePreviewMouseDown}
+              onTouchStart={isMobileRuntime ? handlePreviewTouchStart : undefined}
+              onTouchMove={isMobileRuntime ? handlePreviewTouchMove : undefined}
+              onTouchEnd={isMobileRuntime
+                ? (event) => finishPreviewTouch(event.currentTarget)
+                : undefined}
+              onTouchCancel={isMobileRuntime
+                ? (event) => finishPreviewTouch(event.currentTarget)
+                : undefined}
               onClick={(event) => {
                 if (shouldKeepPreviewSelection(
                   event.currentTarget,
@@ -2092,15 +2263,16 @@ function App() {
           <h1 className="text-sm font-medium text-gray-600">待办</h1>
         </div>
 
-        {/* 时间水印 - 居中 */}
-        <div className="absolute left-1/2 transform -translate-x-1/2 text-[10px] text-gray-400">
-          {new Date().toLocaleString("zh-CN", {
-            month: "2-digit",
-            day: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
-        </div>
+        {!isMobileRuntime && (
+          <div className="absolute left-1/2 transform -translate-x-1/2 text-[10px] text-gray-400">
+            {new Date().toLocaleString("zh-CN", {
+              month: "2-digit",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </div>
+        )}
 
         <div className="flex items-center gap-3">
           <button
@@ -2215,7 +2387,11 @@ function App() {
               const isExpanded = expandedActiveGroups.has(group.id);
 
               return (
-                <div key={group.id} className="mb-4">
+                <div
+                  key={group.id}
+                  className="mb-4"
+                  data-mobile-group-id={isMobileRuntime ? group.id : undefined}
+                >
                   <GroupTitle
                     group={group}
                     noteCount={groupNotes.length}
@@ -2226,6 +2402,15 @@ function App() {
                     onMoveDown={() => handleMoveGroup(group.id, 1)}
                     canMoveUp={groupIndex > 0}
                     canMoveDown={groupIndex < activeGroupedNotes.length - 1}
+                    isDragging={mobileGroupDrag?.sourceId === group.id}
+                    isDragTarget={
+                      mobileGroupDrag?.overId === group.id
+                      && mobileGroupDrag.sourceId !== group.id
+                    }
+                    onDragStart={handleMobileGroupDragStart}
+                    onDragMove={handleMobileGroupDragMove}
+                    onDragEnd={handleMobileGroupDragEnd}
+                    onDragCancel={clearMobileGroupDrag}
                     onDelete={() => {
                       setGroupDeleteConfirm({
                         groupId: group.id,

@@ -6,6 +6,7 @@ import {
   type WebDAVConfig,
 } from "../sync/api";
 import { listen } from "@tauri-apps/api/event";
+import { isMobileRuntime } from "../../platform";
 
 export function WebDAVSettings() {
   const [config, setConfig] = useState<WebDAVConfig>({
@@ -173,6 +174,9 @@ export function WebDAVSettings() {
                 })
               }
               placeholder={config.has_password ? "密码已安全保存；留空表示不修改" : "password"}
+              autoComplete={isMobileRuntime ? "current-password" : undefined}
+              autoCapitalize={isMobileRuntime ? "none" : undefined}
+              spellCheck={isMobileRuntime ? false : undefined}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-cyan-500 pr-10"
             />
             <button

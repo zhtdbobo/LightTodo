@@ -2,7 +2,7 @@
 
 一个轻量级、支持 WebDAV 同步的待办事项应用
 
-当前版本：`v0.3.1` · [更新日志](CHANGELOG.md) · [功能状态](docs/FEATURE_STATUS.md)
+当前版本：`v0.3.3` · [更新日志](CHANGELOG.md) · [功能状态](docs/FEATURE_STATUS.md)
 
 ## ✨ 特性
 
