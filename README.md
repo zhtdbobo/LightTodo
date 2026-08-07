@@ -1,6 +1,13 @@
 # LightTodo
 
 一个轻量级、支持 WebDAV 同步的待办事项应用
+## 应用截图
+<img width="240" height="359" alt="PixPin_2026-08-07_23-22-32" src="https://github.com/user-attachments/assets/9f13d598-76c1-41ee-a23c-da42c3f03f2b" />
+<img width="239" height="359" alt="PixPin_2026-08-07_23-34-20" src="https://github.com/user-attachments/assets/e26dcb11-51fd-4bc0-b910-4b66a77556dc" />
+<img width="570" height="500" alt="PixPin_2026-08-07_23-26-52" src="https://github.com/user-attachments/assets/e3e35e5c-d68d-4dea-ab54-ebffae78c385" />
+<img width="566" height="502" alt="PixPin_2026-08-07_23-26-42" src="https://github.com/user-attachments/assets/0c14add9-5ce5-4e19-91a1-79b3cd450544" />
+<img width="569" height="500" alt="PixPin_2026-08-07_23-27-19" src="https://github.com/user-attachments/assets/ec0e3622-08f8-458f-a6bd-e5b7e6e26f22" />
+<img width="568" height="510" alt="PixPin_2026-08-07_23-27-32" src="https://github.com/user-attachments/assets/70a30f13-3c29-4660-98d5-b4fd05601178" />
 
 当前版本：`v0.3.3` · [更新日志](CHANGELOG.md) · [功能状态](docs/FEATURE_STATUS.md)
 
