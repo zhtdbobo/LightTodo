@@ -188,3 +188,5 @@ jobs:
             [System.Text.UTF8Encoding]::new($false)
           )
           gh release upload $tag latest.json --clobber
+          # Publish only after every platform asset and latest.json are ready.
+          gh release edit $tag --draft=false
