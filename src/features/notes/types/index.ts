@@ -1,4 +1,6 @@
 // 便签类型定义
+export type RepeatRule = "daily" | "weekly" | "monthly";
+
 export interface Note {
   id: string;
   title: string;
@@ -15,6 +17,7 @@ export interface Note {
   updatedAt: number;
   syncedAt?: number;
   completedAt?: number;
+  repeatRule?: RepeatRule | null;
   decryptionError?: string | null;
 }
 
@@ -29,6 +32,7 @@ export interface CreateNoteInput {
   pinned?: boolean;
   deadline?: number | null;
   groupId?: string;
+  repeatRule?: RepeatRule | null;
 }
 
 // 更新便签输入
@@ -43,6 +47,8 @@ export interface UpdateNoteInput {
   pinned?: boolean;
   deadline?: number | null;
   clearDeadline?: boolean;
+  repeatRule?: RepeatRule | null;
+  clearRepeatRule?: boolean;
   priority?: number;
   tags?: string[];
   groupId?: string;

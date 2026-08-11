@@ -17,6 +17,7 @@ pub struct Note {
     pub updated_at: i64,
     pub synced_at: Option<i64>,
     pub completed_at: Option<i64>,
+    pub repeat_rule: Option<String>,
     pub decryption_error: Option<String>,
 }
 
@@ -31,6 +32,7 @@ pub struct CreateNoteInput {
     pub pinned: Option<bool>,
     pub deadline: Option<i64>,
     pub group_id: Option<String>,
+    pub repeat_rule: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -46,6 +48,9 @@ pub struct UpdateNoteInput {
     pub pinned: Option<bool>,
     pub deadline: Option<i64>,
     pub clear_deadline: Option<bool>,
+    pub repeat_rule: Option<String>,
+    #[serde(default)]
+    pub clear_repeat_rule: Option<bool>,
     pub priority: Option<i32>,
     pub tags: Option<Vec<String>>,
     pub group_id: Option<String>,

@@ -11,7 +11,7 @@ import {
 import { useNotesStore } from "./features/notes/stores/notesStore";
 import { getAllNotes, createNote, updateNote, deleteNote } from "./features/notes/hooks/useNotes";
 import { getAllGroups, createGroup, updateGroup, reorderGroups, deleteGroup } from "./features/notes/hooks/useGroups";
-import type { Note, Group } from "./features/notes/types";
+import type { Note, Group, RepeatRule } from "./features/notes/types";
 import { Window } from "@tauri-apps/api/window";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { syncNotes, cancelSync } from "./features/sync/api";
@@ -1170,6 +1170,9 @@ function App() {
         isCompleted: !note.isCompleted,
       });
       updateNoteInStore(updated);
+      if (!note.isCompleted && note.repeatRule) {
+        await loadNotes();
+      }
     } catch (error) {
       console.error("Failed to toggle:", error);
     }
@@ -1314,6 +1317,7 @@ function App() {
     const [showMenu, setShowMenu] = useState(false);
     const [showGroupInput, setShowGroupInput] = useState(false);
     const [deadlineDraftValue, setDeadlineDraftValue] = useState(toDateTimeLocalValue(note.deadline));
+    const [repeatRuleDraft, setRepeatRuleDraft] = useState<RepeatRule | null>(note.repeatRule ?? null);
     const [showDeadlinePicker, setShowDeadlinePicker] = useState(false);
     const [deadlinePickerMonth, setDeadlinePickerMonth] = useState(
       () => new Date(note.deadline ?? Date.now())
@@ -1372,7 +1376,8 @@ function App() {
       const nextDeadlineValue = toDateTimeLocalValue(note.deadline);
       setDeadlineDraftValue(nextDeadlineValue);
       setDeadlinePickerMonth(new Date(note.deadline ?? Date.now()));
-    }, [note.deadline]);
+      setRepeatRuleDraft(note.repeatRule ?? null);
+    }, [note.deadline, note.repeatRule]);
 
     // 当内容变化时调整高度
     useEffect(() => {
@@ -1530,7 +1535,10 @@ function App() {
       }
     };
 
-    const handleDeadlineChange = async (value: string): Promise<boolean> => {
+    const handleDeadlineChange = async (
+      value: string,
+      repeatRule = repeatRuleDraft,
+    ): Promise<boolean> => {
       markNotesMutation();
       try {
         const deadline = fromDateTimeLocalValue(value);
@@ -1538,13 +1546,34 @@ function App() {
           id: note.id,
           deadline,
           clearDeadline: deadline == null,
+          repeatRule: deadline == null ? null : repeatRule,
+          clearRepeatRule: deadline == null,
         });
         updateNoteInStore(updated);
         return true;
       } catch (error) {
         console.error("Failed to update deadline:", error);
         setDeadlineDraftValue(toDateTimeLocalValue(note.deadline));
+        setRepeatRuleDraft(note.repeatRule ?? null);
         return false;
+      }
+    };
+
+    const handleRepeatRuleChange = async (value: RepeatRule | null) => {
+      setRepeatRuleDraft(value);
+      const draftDeadline = fromDateTimeLocalValue(deadlineDraftValue);
+      if (!deadlineDraftValue || note.deadline == null || draftDeadline !== note.deadline) return;
+      markNotesMutation();
+      try {
+        const updated = await updateNote({
+          id: note.id,
+          repeatRule: value,
+          clearRepeatRule: value == null,
+        });
+        updateNoteInStore(updated);
+      } catch (error) {
+        console.error("Failed to update repeat rule:", error);
+        setRepeatRuleDraft(note.repeatRule ?? null);
       }
     };
 
@@ -1607,7 +1636,8 @@ function App() {
 
     const handleClearDeadline = async () => {
       setDeadlineDraftValue("");
-      if (!await handleDeadlineChange("")) {
+      setRepeatRuleDraft(null);
+      if (!await handleDeadlineChange("", null)) {
         setDeadlineDraftValue(toDateTimeLocalValue(note.deadline));
         return;
       }
@@ -2055,6 +2085,24 @@ function App() {
                           </div>
                         </div>
                       )}
+                      <label className="mt-2 flex items-center justify-between gap-2 text-gray-500">
+                        <span>重复</span>
+                        <select
+                          aria-label="重复周期"
+                          value={repeatRuleDraft ?? "none"}
+                          disabled={!deadlineDraftValue}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            void handleRepeatRuleChange(value === "none" ? null : value as RepeatRule);
+                          }}
+                          className="min-w-28 rounded border border-gray-200 bg-white px-2 py-1 text-gray-700 disabled:bg-gray-50 disabled:text-gray-400"
+                        >
+                          <option value="none">不重复</option>
+                          <option value="daily">每天</option>
+                          <option value="weekly">每周</option>
+                          <option value="monthly">每月</option>
+                        </select>
+                      </label>
                     </div>}
 
                     {/* 移动到分组 */}

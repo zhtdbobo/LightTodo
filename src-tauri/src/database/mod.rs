@@ -319,6 +319,10 @@ impl Database {
             conn.execute("ALTER TABLE notes ADD COLUMN deadline INTEGER", [])?;
         }
 
+        if !column_exists(&conn, "notes", "repeat_rule")? {
+            conn.execute("ALTER TABLE notes ADD COLUMN repeat_rule TEXT", [])?;
+        }
+
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_notes_deadline ON notes(deadline)",
             [],

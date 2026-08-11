@@ -31,6 +31,7 @@ const MAX_TAG_BYTES: usize = 128;
 const MILLIS_TIMESTAMP_FLOOR: i64 = 100_000_000_000;
 const MAX_REMOTE_CLOCK_SKEW_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 const MAX_TIMESTAMP_MS: i64 = 8_640_000_000_000_000;
+const REPEAT_RULES: [&str; 3] = ["daily", "weekly", "monthly"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncMode {
@@ -639,6 +640,19 @@ fn canonicalize_object_data(
                 )?;
                 note["deadline"] = serde_json::Value::Number(deadline.into());
             }
+            let repeat_rule = value
+                .get("repeatRule")
+                .or_else(|| value.get("repeat_rule"))
+                .and_then(|value| value.as_str());
+            if let Some(repeat_rule) = repeat_rule {
+                if !REPEAT_RULES.contains(&repeat_rule)
+                    || !is_todo
+                    || !note.get("deadline").is_some()
+                {
+                    return Err(format!("待办 {} 的重复规则无效", fallback_id));
+                }
+                note["repeatRule"] = serde_json::Value::String(repeat_rule.to_string());
+            }
             note
         }
         ObjectKind::Group => {
@@ -940,7 +954,7 @@ fn build_local_snapshot(state: &State<'_, AppState>) -> Result<LocalSnapshot, St
         let mut stmt = conn
             .prepare(
                 "SELECT id, title, content, is_todo, is_completed, color, priority, pinned,
-                        group_id, created_at, updated_at, completed_at, deadline
+                        group_id, created_at, updated_at, completed_at, deadline, repeat_rule
                  FROM notes",
             )
             .map_err(|e| e.to_string())?;
@@ -961,6 +975,7 @@ fn build_local_snapshot(state: &State<'_, AppState>) -> Result<LocalSnapshot, St
                     row.get::<_, i64>(10)?,
                     row.get::<_, Option<i64>>(11)?,
                     row.get::<_, Option<i64>>(12)?,
+                    row.get::<_, Option<String>>(13)?,
                 ))
             })
             .map_err(|e| e.to_string())?
@@ -982,6 +997,7 @@ fn build_local_snapshot(state: &State<'_, AppState>) -> Result<LocalSnapshot, St
             updated_at,
             completed_at,
             deadline,
+            repeat_rule,
         ) in rows
         {
             let tags = note_tags.get(&id).cloned().unwrap_or_default();
@@ -1006,6 +1022,9 @@ fn build_local_snapshot(state: &State<'_, AppState>) -> Result<LocalSnapshot, St
             }
             if let Some(value) = deadline {
                 note["deadline"] = serde_json::Value::Number(value.into());
+            }
+            if let Some(value) = repeat_rule {
+                note["repeatRule"] = serde_json::Value::String(value);
             }
             let data = serde_json::to_vec(&note).map_err(|error| error.to_string())?;
             snapshot
@@ -1089,7 +1108,7 @@ fn load_current_local_object(
             let note = conn
                 .query_row(
                     "SELECT id, title, content, is_todo, is_completed, color, priority, pinned,
-                            group_id, created_at, updated_at, completed_at, deadline
+                            group_id, created_at, updated_at, completed_at, deadline, repeat_rule
                      FROM notes WHERE id = ?1",
                     [id],
                     |row| {
@@ -1107,6 +1126,7 @@ fn load_current_local_object(
                             row.get::<_, i64>(10)?,
                             row.get::<_, Option<i64>>(11)?,
                             row.get::<_, Option<i64>>(12)?,
+                            row.get::<_, Option<String>>(13)?,
                         ))
                     },
                 )
@@ -1136,6 +1156,7 @@ fn load_current_local_object(
                 updated_at,
                 completed_at,
                 deadline,
+                repeat_rule,
             )) = note
             {
                 if let Some(deleted_at) = tombstone.filter(|value| *value >= updated_at) {
@@ -1162,6 +1183,9 @@ fn load_current_local_object(
                 }
                 if let Some(deadline) = deadline {
                     value["deadline"] = serde_json::Value::Number(deadline.into());
+                }
+                if let Some(repeat_rule) = repeat_rule {
+                    value["repeatRule"] = serde_json::Value::String(repeat_rule);
                 }
                 let data = serde_json::to_vec(&value).map_err(|error| error.to_string())?;
                 return Ok(Some(LocalObject::live(updated_at, data)));
@@ -1579,6 +1603,16 @@ fn apply_remote_note(state: &State<'_, AppState>, id: &str, data: &[u8]) -> Resu
         .get("deadline")
         .or_else(|| remote_note.get("deadline_at"))
         .and_then(|value| value.as_i64());
+    let repeat_rule = remote_note
+        .get("repeatRule")
+        .or_else(|| remote_note.get("repeat_rule"))
+        .and_then(|value| value.as_str());
+    if repeat_rule.is_some_and(|value| !REPEAT_RULES.contains(&value))
+        || repeat_rule.is_some() && deadline.is_none()
+        || repeat_rule.is_some() && !is_todo
+    {
+        return Err(format!("待办 {} 的重复规则无效", id));
+    }
     if completed_at.is_some_and(|value| !(0..=MAX_TIMESTAMP_MS).contains(&value))
         || deadline.is_some_and(|value| !(0..=MAX_TIMESTAMP_MS).contains(&value))
     {
@@ -1634,8 +1668,8 @@ fn apply_remote_note(state: &State<'_, AppState>, id: &str, data: &[u8]) -> Resu
     tx.execute(
         "INSERT INTO notes
          (id, title, content, is_todo, is_completed, color, priority, pinned, group_id,
-          created_at, updated_at, completed_at, deadline)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+         created_at, updated_at, completed_at, deadline, repeat_rule)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
          ON CONFLICT(id) DO UPDATE SET
            title = excluded.title,
            content = excluded.content,
@@ -1648,7 +1682,8 @@ fn apply_remote_note(state: &State<'_, AppState>, id: &str, data: &[u8]) -> Resu
            created_at = excluded.created_at,
            updated_at = excluded.updated_at,
            completed_at = excluded.completed_at,
-           deadline = excluded.deadline",
+           deadline = excluded.deadline,
+           repeat_rule = excluded.repeat_rule",
         params![
             id,
             stored_title,
@@ -1663,6 +1698,7 @@ fn apply_remote_note(state: &State<'_, AppState>, id: &str, data: &[u8]) -> Resu
             stored_updated,
             completed_at,
             deadline,
+            repeat_rule,
         ],
     )
     .map_err(|e| e.to_string())?;

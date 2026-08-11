@@ -9,7 +9,7 @@
 <img width="569" height="500" alt="PixPin_2026-08-07_23-27-19" src="https://github.com/user-attachments/assets/ec0e3622-08f8-458f-a6bd-e5b7e6e26f22" />
 <img width="568" height="510" alt="PixPin_2026-08-07_23-27-32" src="https://github.com/user-attachments/assets/70a30f13-3c29-4660-98d5-b4fd05601178" />
 
-当前版本：`v0.3.3` · [更新日志](CHANGELOG.md) · [功能状态](docs/FEATURE_STATUS.md)
+当前版本：`v0.4.0` · [更新日志](CHANGELOG.md) · [功能状态](docs/FEATURE_STATUS.md)
 
 ## ✨ 特性
 
@@ -19,6 +19,7 @@
 - 🎯 **优先级** - 三级优先级标记（高🔴、中🟡、低⚪）
 - 📁 **自定义分组** - 创建、重命名、删除分组，待办可移动到不同分组
 - ⏰ **截止时间** - 设置 deadline 后自动进入“今日”，并按小时显示逾期时间
+- 🔁 **周期任务** - 支持每天、每周、每月重复，完成后自动生成下一次待办
 - 🖥️ **窗口置顶** - 小窗口始终在最前，方便随时查看
 - 🗂️ **系统托盘** - 隐藏到托盘运行，右键菜单快速操作
 - ☁️ **WebDAV 同步** - 支持坚果云、Nextcloud 等 WebDAV 云存储同步

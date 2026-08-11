@@ -3,6 +3,7 @@ use crate::database::{deduplicate_blank_drafts, Database};
 use crate::models::{
     CreateGroupInput, CreateNoteInput, Group, Note, Tag, UpdateGroupInput, UpdateNoteInput,
 };
+use chrono::{Datelike, Duration as ChronoDuration, Timelike, Utc};
 use rusqlite::{params, OptionalExtension};
 use std::{
     collections::HashMap,
@@ -21,6 +22,91 @@ const MAX_TAG_BYTES: usize = 128;
 // malformed request could persist i64::MAX and later make the date picker
 // throw while converting it to an ISO string.
 const MAX_TIMESTAMP_MS: i64 = 8_640_000_000_000_000;
+const REPEAT_RULES: [&str; 3] = ["daily", "weekly", "monthly"];
+
+fn validate_repeat_rule(rule: Option<&str>) -> Result<(), String> {
+    if let Some(rule) = rule {
+        if !REPEAT_RULES.contains(&rule) {
+            return Err("Repeat rule must be daily, weekly, or monthly".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn next_repeat_deadline(deadline: i64, rule: &str) -> Result<i64, String> {
+    let value = chrono::DateTime::<Utc>::from_timestamp_millis(deadline)
+        .ok_or_else(|| "Deadline is outside the supported date range".to_string())?;
+    let next = match rule {
+        "daily" => value + ChronoDuration::days(1),
+        "weekly" => value + ChronoDuration::weeks(1),
+        "monthly" => {
+            let date = value.date_naive();
+            let (year, month) = if date.month() == 12 {
+                (date.year() + 1, 1)
+            } else {
+                (date.year(), date.month() + 1)
+            };
+            let first_of_following_month = if month == 12 {
+                chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+            } else {
+                chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
+            }
+            .ok_or_else(|| "Unable to calculate the next monthly deadline".to_string())?;
+            let last_day = (first_of_following_month - ChronoDuration::days(1)).day();
+            let day = date.day().min(last_day);
+            let next_date = chrono::NaiveDate::from_ymd_opt(year, month, day)
+                .ok_or_else(|| "Unable to calculate the next monthly deadline".to_string())?;
+            next_date
+                .and_hms_milli_opt(
+                    value.hour(),
+                    value.minute(),
+                    value.second(),
+                    value.timestamp_subsec_millis(),
+                )
+                .ok_or_else(|| "Unable to calculate the next monthly deadline".to_string())?
+                .and_utc()
+        }
+        _ => return Err("Unsupported repeat rule".to_string()),
+    };
+    let timestamp = next.timestamp_millis();
+    if !(0..=MAX_TIMESTAMP_MS).contains(&timestamp) {
+        return Err("Next deadline is outside the supported date range".to_string());
+    }
+    Ok(timestamp)
+}
+
+#[cfg(test)]
+mod repeat_tests {
+    use super::*;
+
+    fn timestamp(value: &str) -> i64 {
+        chrono::DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .timestamp_millis()
+    }
+
+    #[test]
+    fn advances_daily_and_weekly_deadlines() {
+        let base = timestamp("2026-08-11T09:30:00Z");
+        assert_eq!(
+            next_repeat_deadline(base, "daily").unwrap(),
+            timestamp("2026-08-12T09:30:00Z")
+        );
+        assert_eq!(
+            next_repeat_deadline(base, "weekly").unwrap(),
+            timestamp("2026-08-18T09:30:00Z")
+        );
+    }
+
+    #[test]
+    fn clamps_monthly_deadline_to_last_day() {
+        let base = timestamp("2026-01-31T09:30:00Z");
+        assert_eq!(
+            next_repeat_deadline(base, "monthly").unwrap(),
+            timestamp("2026-02-28T09:30:00Z")
+        );
+    }
+}
 
 fn next_timestamp(previous: i64) -> Result<i64, String> {
     if previous > MAX_TIMESTAMP_MS {
@@ -132,7 +218,7 @@ pub async fn get_all_notes(state: State<'_, AppState>) -> Result<Vec<Note>, Stri
     let mut stmt = conn
         .prepare(
             "SELECT id, title, content, is_todo, is_completed, color, pinned, priority,
-                    created_at, updated_at, synced_at, group_id, completed_at, deadline
+                    created_at, updated_at, synced_at, group_id, completed_at, deadline, repeat_rule
              FROM notes
              ORDER BY pinned DESC, priority DESC, updated_at DESC",
         )
@@ -158,6 +244,7 @@ pub async fn get_all_notes(state: State<'_, AppState>) -> Result<Vec<Note>, Stri
                 group_id: row.get(11)?,
                 completed_at: row.get(12)?,
                 deadline: row.get(13)?,
+                repeat_rule: row.get(14)?,
                 decryption_error: None,
             })
         })
@@ -241,6 +328,10 @@ pub async fn create_note(
     {
         return Err("Deadline is outside the supported date range".to_string());
     }
+    validate_repeat_rule(input.repeat_rule.as_deref())?;
+    if input.repeat_rule.is_some() && input.deadline.is_none() {
+        return Err("A repeat rule requires a deadline".to_string());
+    }
     validate_group_id(&conn, input.group_id.as_deref())?;
     let tags = normalize_tags(&input.tags)?;
 
@@ -276,8 +367,8 @@ pub async fn create_note(
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     tx.execute(
-        "INSERT INTO notes (id, title, content, is_todo, is_completed, color, pinned, priority, created_at, updated_at, group_id, deadline)
-         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, ?8, ?9, ?10)",
+        "INSERT INTO notes (id, title, content, is_todo, is_completed, color, pinned, priority, created_at, updated_at, group_id, deadline, repeat_rule)
+         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, ?8, ?9, ?10, ?11)",
         params![
             &id,
             &stored_title,
@@ -289,6 +380,7 @@ pub async fn create_note(
             now,
             &input.group_id,
             input.deadline,
+            &input.repeat_rule,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -316,6 +408,7 @@ pub async fn create_note(
         synced_at: None,
         completed_at: None,
         deadline: input.deadline,
+        repeat_rule: input.repeat_rule,
         decryption_error: None,
     })
 }
@@ -352,6 +445,7 @@ pub async fn update_note(
     {
         return Err("Deadline is outside the supported date range".to_string());
     }
+    validate_repeat_rule(input.repeat_rule.as_deref())?;
     let normalized_tags = input.tags.as_deref().map(normalize_tags).transpose()?;
 
     let mut conn = conn.lock();
@@ -359,7 +453,7 @@ pub async fn update_note(
     let current = tx
         .query_row(
             "SELECT title, content, is_todo, is_completed, color, pinned, priority,
-                    group_id, created_at, updated_at, completed_at, deadline
+                    group_id, created_at, updated_at, completed_at, deadline, repeat_rule
              FROM notes WHERE id = ?1",
             [&input.id],
             |row| {
@@ -376,6 +470,7 @@ pub async fn update_note(
                     row.get::<_, i64>(9)?,
                     row.get::<_, Option<i64>>(10)?,
                     row.get::<_, Option<i64>>(11)?,
+                    row.get::<_, Option<String>>(12)?,
                 ))
             },
         )
@@ -418,6 +513,32 @@ pub async fn update_note(
     } else {
         current.11
     };
+    let next_repeat_rule =
+        if !next_is_todo || next_deadline.is_none() || input.clear_repeat_rule.unwrap_or(false) {
+            None
+        } else if input.repeat_rule.is_some() {
+            input.repeat_rule.clone()
+        } else {
+            current.12
+        };
+    if next_repeat_rule.is_some() && next_deadline.is_none() {
+        return Err("A repeat rule requires a deadline".to_string());
+    }
+    let should_spawn_next =
+        !current.3 && next_completed && next_repeat_rule.is_some() && next_deadline.is_some();
+    let spawned_deadline = if should_spawn_next {
+        Some(next_repeat_deadline(
+            next_deadline.expect("checked above"),
+            next_repeat_rule.as_deref().expect("checked above"),
+        )?)
+    } else {
+        None
+    };
+    let stored_repeat_rule = if should_spawn_next {
+        None
+    } else {
+        next_repeat_rule.clone()
+    };
 
     if next_is_todo
         && !next_completed
@@ -457,8 +578,8 @@ pub async fn update_note(
         "UPDATE notes SET
            title = ?1, content = ?2, is_todo = ?3, is_completed = ?4,
            color = ?5, pinned = ?6, priority = ?7, group_id = ?8,
-           updated_at = ?9, completed_at = ?10, deadline = ?11
-         WHERE id = ?12",
+           updated_at = ?9, completed_at = ?10, deadline = ?11, repeat_rule = ?12
+         WHERE id = ?13",
         params![
             stored_title,
             next_content,
@@ -471,16 +592,48 @@ pub async fn update_note(
             now,
             next_completed_at,
             next_deadline,
+            stored_repeat_rule,
             &input.id,
         ],
     )
     .map_err(|error| error.to_string())?;
 
-    if let Some(tags) = normalized_tags {
+    if let Some(tags) = normalized_tags.as_ref() {
         tx.execute("DELETE FROM note_tags WHERE note_id = ?1", [&input.id])
             .map_err(|error| error.to_string())?;
-        for tag_name in &tags {
+        for tag_name in tags {
             insert_tag_for_note(&tx, &input.id, tag_name).map_err(|error| error.to_string())?;
+        }
+    }
+
+    if let Some(deadline) = spawned_deadline {
+        let next_id = uuid::Uuid::new_v4().to_string();
+        let next_created_at = next_timestamp(now)?;
+        let next_title = crypto::encrypt_note_title(&next_id, &next_content, &next_title)?;
+        let next_tags = normalized_tags
+            .clone()
+            .unwrap_or(get_note_tags(&tx, &input.id).map_err(|error| error.to_string())?);
+        tx.execute(
+            "INSERT INTO notes
+             (id, title, content, is_todo, is_completed, color, pinned, priority,
+              created_at, updated_at, group_id, deadline, repeat_rule)
+             VALUES (?1, ?2, ?3, 1, 0, ?4, ?5, ?6, ?7, ?7, ?8, ?9, ?10)",
+            params![
+                &next_id,
+                next_title,
+                &next_content,
+                next_color,
+                next_pinned as i64,
+                next_priority,
+                next_created_at,
+                &next_group_id,
+                deadline,
+                &next_repeat_rule,
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+        for tag_name in &next_tags {
+            insert_tag_for_note(&tx, &next_id, tag_name).map_err(|error| error.to_string())?;
         }
     }
     tx.commit().map_err(|error| error.to_string())?;
@@ -537,7 +690,7 @@ pub async fn search_notes(query: String, state: State<'_, AppState>) -> Result<V
     let mut stmt = conn
         .prepare(
             "SELECT id, title, content, is_todo, is_completed, color, pinned, priority,
-                    created_at, updated_at, synced_at, group_id, completed_at, deadline
+                    created_at, updated_at, synced_at, group_id, completed_at, deadline, repeat_rule
              FROM notes
              ORDER BY pinned DESC, priority DESC, updated_at DESC",
         )
@@ -561,6 +714,7 @@ pub async fn search_notes(query: String, state: State<'_, AppState>) -> Result<V
                 group_id: row.get(11)?,
                 completed_at: row.get(12)?,
                 deadline: row.get(13)?,
+                repeat_rule: row.get(14)?,
                 decryption_error: None,
             })
         })
@@ -646,7 +800,7 @@ fn query_note_by_id(conn: &rusqlite::Connection, id: &str) -> Result<Option<Note
     let note = conn
         .query_row(
             "SELECT id, title, content, is_todo, is_completed, color, pinned, priority,
-                    created_at, updated_at, synced_at, group_id, completed_at, deadline
+                    created_at, updated_at, synced_at, group_id, completed_at, deadline, repeat_rule
              FROM notes WHERE id = ?1",
             [id],
             |row| {
@@ -666,6 +820,7 @@ fn query_note_by_id(conn: &rusqlite::Connection, id: &str) -> Result<Option<Note
                     group_id: row.get(11)?,
                     completed_at: row.get(12)?,
                     deadline: row.get(13)?,
+                    repeat_rule: row.get(14)?,
                     decryption_error: None,
                 })
             },

@@ -20,6 +20,7 @@ const MAX_COLOR_BYTES: usize = 256;
 const MAX_TAGS: usize = 100;
 const MAX_TAG_BYTES: usize = 128;
 const MAX_TIMESTAMP_MS: i64 = 8_640_000_000_000_000;
+const REPEAT_RULES: [&str; 3] = ["daily", "weekly", "monthly"];
 
 #[derive(Debug, Serialize, Deserialize)]
 struct BackupDocument {
@@ -104,7 +105,7 @@ fn load_notes(conn: &Connection) -> Result<Vec<Note>, String> {
     let mut statement = conn
         .prepare(
             "SELECT id, title, content, is_todo, is_completed, color, pinned, priority,
-                    created_at, updated_at, synced_at, group_id, completed_at, deadline
+                    created_at, updated_at, synced_at, group_id, completed_at, deadline, repeat_rule
              FROM notes
              ORDER BY created_at ASC, id ASC",
         )
@@ -127,6 +128,7 @@ fn load_notes(conn: &Connection) -> Result<Vec<Note>, String> {
                 group_id: row.get(11)?,
                 completed_at: row.get(12)?,
                 deadline: row.get(13)?,
+                repeat_rule: row.get(14)?,
                 decryption_error: None,
             })
         })
@@ -226,6 +228,11 @@ fn validate_backup(document: &mut BackupDocument) -> Result<(), String> {
                 validate_timestamp(label, timestamp)?;
             }
         }
+        if let Some(rule) = note.repeat_rule.as_deref() {
+            if !REPEAT_RULES.contains(&rule) || note.deadline.is_none() || !note.is_todo {
+                return Err("备份中的重复规则无效".to_string());
+            }
+        }
         if note.decryption_error.is_some() {
             return Err("备份中包含无法解密的密码条目".to_string());
         }
@@ -320,8 +327,8 @@ fn replace_database(
         tx.execute(
             "INSERT INTO notes
              (id, title, content, is_todo, is_completed, color, pinned, priority,
-              created_at, updated_at, synced_at, group_id, completed_at, deadline)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+              created_at, updated_at, synced_at, group_id, completed_at, deadline, repeat_rule)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 &note.id,
                 stored_title,
@@ -337,6 +344,7 @@ fn replace_database(
                 &note.group_id,
                 note.completed_at,
                 note.deadline,
+                &note.repeat_rule,
             ],
         )
         .map_err(|error| error.to_string())?;
@@ -450,6 +458,7 @@ mod tests {
                 color: None,
                 pinned: false,
                 deadline: None,
+                repeat_rule: None,
                 priority: 1,
                 tags: vec!["重要".to_string()],
                 group_id: Some("group-1".to_string()),
