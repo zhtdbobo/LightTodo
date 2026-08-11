@@ -2,6 +2,19 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)规范。
 
+## [0.4.2] - 2026-08-11
+
+### 修复与改进
+
+- Android 发布：升级 Android 构建步骤至支持 Tauri 移动端命令的 `tauri-action@v1`
+- Release 工作流：修复 Android 构建被错误执行为桌面 `tauri build --apk` 的问题
+
+### 发布说明
+
+- `v0.4.2` 替代构建失败的 `v0.4.1`，重新发布 Windows、macOS 和 Android 安装包
+
+---
+
 ## [0.4.1] - 2026-08-11
 
 ### 主要功能
