@@ -20,6 +20,7 @@ blob-report/
 .claude/
 src-tauri/.updater/*.key
 src-tauri/.updater/*.password
+.android-signing/
 
 # Build tool caches
 .gradle/

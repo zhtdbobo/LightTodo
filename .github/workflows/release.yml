@@ -89,6 +89,14 @@ jobs:
   build-macos:
     needs: prepare
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            name: Apple Silicon
+          - target: x86_64-apple-darwin
+            name: Intel
     env:
       APPLE_SIGNING_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' }}
     steps:
@@ -105,12 +113,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.target }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build signed universal macOS app and DMG
+      - name: Build signed macOS ${{ matrix.name }} app and DMG
         if: env.APPLE_SIGNING_ENABLED == 'true'
         uses: tauri-apps/tauri-action@v0
         env:
@@ -130,9 +138,9 @@ jobs:
           releaseDraft: ${{ needs.prepare.outputs.release_draft }}
           prerelease: false
           includeUpdaterJson: false
-          args: --target universal-apple-darwin --bundles app,dmg
+          args: --target ${{ matrix.target }} --bundles app,dmg
 
-      - name: Build unsigned universal macOS app and DMG
+      - name: Build unsigned macOS ${{ matrix.name }} app and DMG
         if: env.APPLE_SIGNING_ENABLED != 'true'
         uses: tauri-apps/tauri-action@v0
         env:
@@ -146,7 +154,7 @@ jobs:
           releaseDraft: ${{ needs.prepare.outputs.release_draft }}
           prerelease: false
           includeUpdaterJson: false
-          args: --target universal-apple-darwin --bundles app,dmg
+          args: --target ${{ matrix.target }} --bundles app,dmg
 
   build-android:
     needs: prepare
@@ -186,6 +194,25 @@ jobs:
       - name: Allow Gradle wrapper execution
         run: chmod +x src-tauri/gen/android/gradlew
 
+      - name: Configure Android release signing
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [[ -z "$ANDROID_KEYSTORE_BASE64" || -z "$ANDROID_KEYSTORE_PASSWORD" || -z "$ANDROID_KEY_ALIAS" || -z "$ANDROID_KEY_PASSWORD" ]]; then
+            echo "Android release signing secrets are incomplete" >&2
+            exit 1
+          fi
+          keystore_path="$RUNNER_TEMP/lighttodo-release.p12"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
+          echo "ANDROID_KEYSTORE_PATH=$keystore_path" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_ALIAS=$ANDROID_KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD" >> "$GITHUB_ENV"
+
       - name: Build Android APK
         uses: tauri-apps/tauri-action@v1
         env:
@@ -220,25 +247,39 @@ jobs:
           foreach ($asset in $universalApks) {
             gh release delete-asset $tag $asset.name --yes
           }
-          $macUpdater = @($release.assets | Where-Object { $_.name -match '\.app\.tar\.gz$' })
-          $macSignature = @($release.assets | Where-Object { $_.name -match '\.app\.tar\.gz\.sig$' })
-          if ($macUpdater.Count -ne 1 -or $macSignature.Count -ne 1) {
-            throw "Expected exactly one universal macOS updater archive and signature"
+
+          function Get-MacPlatform($archivePattern, $signaturePath) {
+            $updater = @($release.assets | Where-Object { $_.name -match $archivePattern })
+            if ($updater.Count -ne 1) {
+              throw "Expected exactly one macOS updater archive matching $archivePattern"
+            }
+            $signatureAssetName = "$($updater[0].name).sig"
+            $signatureAsset = @($release.assets | Where-Object { $_.name -eq $signatureAssetName })
+            if ($signatureAsset.Count -ne 1) {
+              throw "Expected signature asset $signatureAssetName"
+            }
+            gh release download $tag --pattern $signatureAssetName --output $signaturePath --clobber
+            $signature = (Get-Content $signaturePath -Raw -Encoding utf8).Trim()
+            $assetName = [uri]::EscapeDataString($updater[0].name)
+            return [ordered]@{
+              signature = $signature
+              url = "https://gh-proxy.com/github.com/zhtdbobo/LightTodo/releases/download/$tag/$assetName"
+            }
           }
 
-          $signatureName = $macSignature[0].name
-          gh release download $tag --pattern $signatureName --output macos-updater.sig --clobber
-          $signature = (Get-Content macos-updater.sig -Raw -Encoding utf8).Trim()
-          $assetName = [uri]::EscapeDataString($macUpdater[0].name)
-          $downloadUrl = "https://gh-proxy.com/github.com/zhtdbobo/LightTodo/releases/download/$tag/$assetName"
-          $macPlatform = [ordered]@{
-            signature = $signature
-            url = $downloadUrl
+          $macArmPlatform = Get-MacPlatform '(?i)(aarch64|arm64).*\.app\.tar\.gz$' 'macos-arm64-updater.sig'
+          $macX64Platform = Get-MacPlatform '(?i)(x64|x86_64).*\.app\.tar\.gz$' 'macos-x64-updater.sig'
+
+          $universalMacAssets = @($release.assets | Where-Object {
+            $_.name -match '(?i)universal\.(dmg|app\.tar\.gz(\.sig)?)$'
+          })
+          foreach ($asset in $universalMacAssets) {
+            gh release delete-asset $tag $asset.name --yes
           }
 
           $manifest = Get-Content latest.json -Raw -Encoding utf8 | ConvertFrom-Json
-          $manifest.platforms | Add-Member -NotePropertyName "darwin-aarch64" -NotePropertyValue $macPlatform -Force
-          $manifest.platforms | Add-Member -NotePropertyName "darwin-x86_64" -NotePropertyValue $macPlatform -Force
+          $manifest.platforms | Add-Member -NotePropertyName "darwin-aarch64" -NotePropertyValue $macArmPlatform -Force
+          $manifest.platforms | Add-Member -NotePropertyName "darwin-x86_64" -NotePropertyValue $macX64Platform -Force
           foreach ($platform in $manifest.platforms.PSObject.Properties) {
             $platform.Value.url = $platform.Value.url -replace '^https://github\.com/', 'https://gh-proxy.com/github.com/'
           }
