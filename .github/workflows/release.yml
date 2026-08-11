@@ -143,8 +143,60 @@ jobs:
           includeUpdaterJson: false
           args: --target universal-apple-darwin --bundles app,dmg
 
+  build-android:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools" "ndk;28.2.13676358"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Allow Gradle wrapper execution
+        run: chmod +x src-tauri/gen/android/gradlew
+
+      - name: Build Android APK
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: v__VERSION__
+          releaseBody: ${{ needs.prepare.outputs.release_body }}
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: false
+          mobile: android
+          args: --apk
+
   finalize-release:
-    needs: [build-windows, build-macos]
+    needs: [build-windows, build-macos, build-android]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

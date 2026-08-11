@@ -83,12 +83,14 @@ Release Note 统一使用中文，并按下面结构编写：
 
 ### 3.4 当前项目建议
 
-LightTodo 当前同时发布 Windows `NSIS` 和 macOS 通用架构 `DMG`，因此每次 release 至少要确保：
+LightTodo 当前发布 Windows `NSIS`、macOS 通用架构 `DMG` 和 Android `APK`，因此每次 release 至少要确保：
 
 - `LightTodo_<version>_x64-setup.exe`
 - `LightTodo_<version>_x64-setup.exe.sig`
 - `LightTodo_<version>_universal.dmg`
+- Tauri 生成的 Android APK（文件名以实际构建产物为准）
 - macOS `*.app.tar.gz` 及其 `.sig`
+- Android：直接下载分发；上架 Google Play 仍需配置 Android 签名
 - `latest.json`
 - Release Note 已更新为中文
 
@@ -184,6 +186,7 @@ Release 工作流会自动将 `latest.json` 中的安装包地址改为 `gh-prox
 - [ ] `## 主要功能` 和 `## 发布说明` 结构完整
 - [ ] Windows `NSIS` 安装包已上传
 - [ ] macOS 通用架构 `DMG` 已上传
+- [ ] Android `APK` 已上传
 - [ ] 签名文件和 `latest.json` 已上传
 - [ ] Release 页面没有多余旧资产
 - [ ] 标题、正文、资产命名一致

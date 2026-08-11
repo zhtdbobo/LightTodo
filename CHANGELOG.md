@@ -2,6 +2,19 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)规范。
 
+## [0.4.1] - 2026-08-11
+
+### 主要功能
+
+- Android 发布：Release 工作流自动构建并上传 Tauri Android APK
+
+### 发布说明
+
+- `v0.4.1` 是 `v0.4.0` 的 Android 发布补充版本
+- Android APK 用于直接下载分发；上架 Google Play 仍需配置 Android 签名
+
+---
+
 ## [0.4.0] - 2026-08-11
 
 ### 主要功能
