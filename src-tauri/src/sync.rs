@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::sync::{atomic::Ordering, OnceLock};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 const WEBDAV_CREDENTIAL_TARGET: &str = "LightTodo/WebDAV";
 static CREDENTIAL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -284,18 +284,18 @@ pub async fn test_webdav_connection(
 }
 
 #[tauri::command]
-pub async fn sync_notes(state: State<'_, AppState>) -> Result<String, String> {
-    sync_manifest::run_configured(&state, SyncMode::Bidirectional).await
+pub async fn sync_notes(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    sync_manifest::run_configured(&app, &state, SyncMode::Bidirectional).await
 }
 
 #[tauri::command]
-pub async fn push_notes(state: State<'_, AppState>) -> Result<String, String> {
-    sync_manifest::run_configured(&state, SyncMode::Push).await
+pub async fn push_notes(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    sync_manifest::run_configured(&app, &state, SyncMode::Push).await
 }
 
 #[tauri::command]
-pub async fn pull_notes(state: State<'_, AppState>) -> Result<String, String> {
-    sync_manifest::run_configured(&state, SyncMode::Pull).await
+pub async fn pull_notes(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    sync_manifest::run_configured(&app, &state, SyncMode::Pull).await
 }
 
 #[tauri::command]

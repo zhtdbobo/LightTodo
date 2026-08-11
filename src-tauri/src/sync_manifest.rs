@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::Ordering;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 const MANIFEST_VERSION: u32 = 1;
 const MANIFEST_FILE: &str = "manifest.json";
@@ -169,6 +169,39 @@ enum MergeAction {
     DeleteRemote,
     DeleteLocal,
     Conflict,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncProgress {
+    phase: &'static str,
+    current: usize,
+    total: usize,
+    message: String,
+}
+
+fn emit_progress(
+    app: &AppHandle,
+    phase: &'static str,
+    current: usize,
+    total: usize,
+    message: impl Into<String>,
+) {
+    let _ = app.emit(
+        "sync-progress",
+        SyncProgress {
+            phase,
+            current,
+            total,
+            message: message.into(),
+        },
+    );
+}
+
+#[derive(Debug)]
+struct PreparedDownload {
+    data: Vec<u8>,
+    object_etag: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -1897,6 +1930,7 @@ struct CollectionContext<'a, 'state> {
 }
 
 async fn process_collection(
+    app: &AppHandle,
     context: &CollectionContext<'_, '_>,
     kind: ObjectKind,
     local_objects: &BTreeMap<String, LocalObject>,
@@ -1905,19 +1939,91 @@ async fn process_collection(
     counts: &mut SyncCounts,
     budget: &mut TransferBudget,
 ) -> Result<bool, String> {
-    let mut ids = BTreeSet::new();
-    ids.extend(local_objects.keys().cloned());
-    ids.extend(remote_objects.keys().cloned());
+    let mut id_set = BTreeSet::new();
+    id_set.extend(local_objects.keys().cloned());
+    id_set.extend(remote_objects.keys().cloned());
+    let ids: Vec<String> = id_set.into_iter().collect();
+    let mut actions = BTreeMap::new();
+    for id in &ids {
+        validate_object_id(id)?;
+        actions.insert(
+            id.clone(),
+            resolve_action(context.mode, local_objects.get(id), remote_objects.get(id)),
+        );
+    }
+
+    // Fetch and validate every object before changing the local database. If
+    // a large first sync is interrupted by the network or Android suspending
+    // the process, the next run starts from a clean local snapshot instead of
+    // exposing a different partial batch after every app launch.
+    let download_ids: Vec<String> = ids
+        .iter()
+        .filter(|id| actions.get(*id) == Some(&MergeAction::Download))
+        .cloned()
+        .collect();
+    let download_total = download_ids.len();
+    let mut prepared_downloads = HashMap::new();
+    if download_total > 0 {
+        emit_progress(
+            app,
+            "downloading",
+            0,
+            download_total,
+            format!("正在下载{} 0/{}", kind.object_label(), download_total),
+        );
+    }
+    for (index, id) in download_ids.into_iter().enumerate() {
+        if context.state.sync_cancelled.load(Ordering::SeqCst) {
+            return Err("同步已取消".to_string());
+        }
+        let remote = remote_objects
+            .get(&id)
+            .ok_or_else(|| format!("远程{} {} 不存在", kind.object_label(), id))?;
+        let (raw_data, object_etag) = get_remote_data(
+            context.client,
+            kind,
+            context.directory,
+            &id,
+            legacy_contents,
+            budget,
+        )
+        .await?;
+        let data = canonicalize_object_data(kind, &id, &raw_data)?;
+        verify_remote_data(kind, &id, remote, &data)?;
+        prepared_downloads.insert(id, PreparedDownload { data, object_etag });
+        emit_progress(
+            app,
+            "downloading",
+            index + 1,
+            download_total,
+            format!(
+                "正在下载{} {}/{}",
+                kind.object_label(),
+                index + 1,
+                download_total
+            ),
+        );
+    }
+
     let mut manifest_changed = false;
+    let mut applied_downloads = 0;
+    if download_total > 0 {
+        emit_progress(
+            app,
+            "applying",
+            0,
+            download_total,
+            format!("正在导入{} 0/{}", kind.object_label(), download_total),
+        );
+    }
 
     for id in ids {
-        validate_object_id(&id)?;
         if context.state.sync_cancelled.load(Ordering::SeqCst) {
             return Err("同步已取消".to_string());
         }
         let local = local_objects.get(&id).cloned();
         let remote = remote_objects.get(&id).cloned();
-        let action = resolve_action(context.mode, local.as_ref(), remote.as_ref());
+        let action = actions.remove(&id).unwrap_or(MergeAction::None);
 
         match action {
             MergeAction::None => {}
@@ -2228,17 +2334,9 @@ async fn process_collection(
                 if remote.is_deleted() {
                     continue;
                 }
-                let (raw_data, object_etag) = get_remote_data(
-                    context.client,
-                    kind,
-                    context.directory,
-                    &id,
-                    legacy_contents,
-                    budget,
-                )
-                .await?;
-                let data = canonicalize_object_data(kind, &id, &raw_data)?;
-                verify_remote_data(kind, &id, remote, &data)?;
+                let PreparedDownload { data, object_etag } = prepared_downloads
+                    .remove(&id)
+                    .ok_or_else(|| format!("{} {} 未完成下载准备", kind.object_label(), id))?;
                 let was_live = local
                     .as_ref()
                     .map(|object| !object.entry.is_deleted())
@@ -2265,6 +2363,19 @@ async fn process_collection(
                     (migrated_plaintext_password, migrated_local)
                 };
                 counts.record_download(kind, was_live);
+                applied_downloads += 1;
+                emit_progress(
+                    app,
+                    "applying",
+                    applied_downloads,
+                    download_total,
+                    format!(
+                        "正在导入{} {}/{}",
+                        kind.object_label(),
+                        applied_downloads,
+                        download_total
+                    ),
+                );
                 if let Some(current) = migrated_local {
                     let encrypted_data = current.data.as_deref().ok_or_else(|| {
                         format!("迁移后的{} {} 缺少内容", kind.object_label(), id)
@@ -2451,24 +2562,34 @@ fn format_result(mode: SyncMode, counts: &SyncCounts, manifest_written: bool) ->
 
 /// Load configuration after taking the sync lock so a concurrent settings
 /// save cannot change the credential or directory halfway through a run.
-pub async fn run_configured(state: &State<'_, AppState>, mode: SyncMode) -> Result<String, String> {
+pub async fn run_configured(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    mode: SyncMode,
+) -> Result<String, String> {
     let _guard = state
         .sync_lock
         .try_lock()
         .map_err(|_| "同步任务正在进行".to_string())?;
     let config = crate::sync::load_webdav_config_for_sync(state)?
         .ok_or_else(|| "WebDAV 未配置".to_string())?;
-    run_loop(state, &config, mode).await
+    emit_progress(app, "preparing", 0, 0, "正在读取云端同步索引…");
+    let result = run_loop(app, state, &config, mode).await;
+    if result.is_ok() {
+        emit_progress(app, "complete", 1, 1, "同步完成");
+    }
+    result
 }
 
 async fn run_loop(
+    app: &AppHandle,
     state: &State<'_, AppState>,
     config: &WebDAVSettings,
     mode: SyncMode,
 ) -> Result<String, String> {
     state.sync_cancelled.store(false, Ordering::SeqCst);
     for attempt in 0..3 {
-        match run_once(state, config, mode).await {
+        match run_once(app, state, config, mode).await {
             Ok(result) => return Ok(result),
             Err(error) if error.starts_with(RETRY_SYNC_PREFIX) && attempt < 2 => continue,
             Err(error) if error.starts_with(RETRY_SYNC_PREFIX) => {
@@ -2481,6 +2602,7 @@ async fn run_loop(
 }
 
 async fn run_once(
+    app: &AppHandle,
     state: &State<'_, AppState>,
     config: &WebDAVSettings,
     mode: SyncMode,
@@ -2544,6 +2666,7 @@ async fn run_once(
         mode,
     };
     manifest_changed |= process_collection(
+        app,
         &group_context,
         ObjectKind::Group,
         &local.groups,
@@ -2564,6 +2687,7 @@ async fn run_once(
         mode,
     };
     manifest_changed |= process_collection(
+        app,
         &note_context,
         ObjectKind::Note,
         &local.notes,
@@ -2576,6 +2700,7 @@ async fn run_once(
     // 即使首次执行的是“下载”且云端为空，也创建空 manifest；后续同步即可稳定为一次索引请求。
     let should_write_manifest = manifest_changed || !remote.manifest_exists;
     if should_write_manifest {
+        emit_progress(app, "finishing", 0, 0, "正在更新云端同步索引…");
         if mode == SyncMode::Pull && !remote.manifest_exists {
             ensure_sync_directories(&client, &directory, &notes_directory, &groups_directory)
                 .await?;
@@ -2617,6 +2742,7 @@ async fn run_once(
         }
     }
 
+    emit_progress(app, "finishing", 0, 0, "正在完成同步…");
     update_last_sync(state, chrono::Utc::now().timestamp_millis())?;
     Ok(format_result(mode, &counts, should_write_manifest))
 }

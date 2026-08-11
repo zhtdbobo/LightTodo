@@ -48,6 +48,13 @@ export async function resetSyncState(): Promise<void> {
   return await invoke<void>("reset_sync_state");
 }
 
+export interface SyncProgress {
+  phase: "preparing" | "downloading" | "applying" | "finishing" | "complete";
+  current: number;
+  total: number;
+  message: string;
+}
+
 export async function cancelSync(): Promise<void> {
   return await invoke<void>("cancel_sync");
 }

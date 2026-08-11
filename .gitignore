@@ -21,6 +21,7 @@ blob-report/
 src-tauri/.updater/*.key
 src-tauri/.updater/*.password
 .android-signing/
+LightTodo-Android-Signing-Backup/
 
 # Build tool caches
 .gradle/

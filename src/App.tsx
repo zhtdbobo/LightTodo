@@ -13,8 +13,9 @@ import { getAllNotes, createNote, updateNote, deleteNote } from "./features/note
 import { getAllGroups, createGroup, updateGroup, reorderGroups, deleteGroup } from "./features/notes/hooks/useGroups";
 import type { Note, Group, RepeatRule } from "./features/notes/types";
 import { Window } from "@tauri-apps/api/window";
+import { listen as listenToEvent } from "@tauri-apps/api/event";
 import { SettingsPage } from "./features/settings/SettingsPage";
-import { syncNotes, cancelSync } from "./features/sync/api";
+import { syncNotes, cancelSync, type SyncProgress } from "./features/sync/api";
 import { formatTimestamp, calculateDuration } from "./features/notes/utils/timeFormat";
 import { DeadlineTimeInput } from "./features/notes/components/DeadlineTimeInput";
 import { SimpleMarkdown } from "./features/notes/components/SimpleMarkdown";
@@ -424,6 +425,7 @@ function App() {
   );
   const [syncMessage, setSyncMessage] = useState("");
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const [showSyncMenu, setShowSyncMenu] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [isInitialDataLoading, setIsInitialDataLoading] = useState(true);
@@ -676,6 +678,29 @@ function App() {
   }, [showSettings]);
 
   useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listenToEvent<SyncProgress>("sync-progress", (event) => {
+      if (!disposed) {
+        setSyncProgress(event.payload);
+      }
+    })
+      .then((stopListening) => {
+        if (disposed) {
+          stopListening();
+        } else {
+          unlisten = stopListening;
+        }
+      })
+      .catch((error) => console.error("Failed to listen for sync progress:", error));
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
     if (showSettings) return;
 
     let disposed = false;
@@ -890,6 +915,12 @@ function App() {
     if (syncInFlightRef.current) return;
     syncInFlightRef.current = true;
     setIsSyncing(true);
+    setSyncProgress({
+      phase: "preparing",
+      current: 0,
+      total: 0,
+      message: "正在准备同步…",
+    });
     try {
       const result = await operation();
       showTimedSyncMessage(result, SYNC_SUCCESS_MESSAGE_MS);
@@ -901,6 +932,7 @@ function App() {
     } finally {
       syncInFlightRef.current = false;
       setIsSyncing(false);
+      setSyncProgress(null);
     }
   };
 
@@ -2893,6 +2925,47 @@ function App() {
           )}
         </div>
       </div>
+
+      {/* 同步进度 */}
+      {isSyncing && syncProgress && (
+        <div className="fixed bottom-20 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
+          <div
+            role="status"
+            aria-live="polite"
+            className="w-full max-w-sm rounded-lg bg-gray-900 px-4 py-3 text-white shadow-xl"
+          >
+            <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+              <span className="min-w-0 truncate">{syncProgress.message}</span>
+              {syncProgress.total > 0 && (
+                <span className="flex-shrink-0 text-gray-300">
+                  {Math.min(100, Math.round((syncProgress.current / syncProgress.total) * 100))}%
+                </span>
+              )}
+            </div>
+            {syncProgress.total > 0 ? (
+              <div
+                role="progressbar"
+                aria-label={syncProgress.message}
+                aria-valuemin={0}
+                aria-valuemax={syncProgress.total}
+                aria-valuenow={syncProgress.current}
+                className="h-2 overflow-hidden rounded-full bg-gray-700"
+              >
+                <div
+                  className="h-full rounded-full bg-cyan-400 transition-[width] duration-200"
+                  style={{
+                    width: `${Math.min(100, (syncProgress.current / syncProgress.total) * 100)}%`,
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="h-2 overflow-hidden rounded-full bg-gray-700">
+                <div className="h-full w-1/3 animate-pulse rounded-full bg-cyan-400" />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 同步消息提示 */}
       {syncMessage && (
