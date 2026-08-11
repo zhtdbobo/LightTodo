@@ -8,6 +8,7 @@
 
 - Android 发布：升级 Android 构建步骤至支持 Tauri 移动端命令的 `tauri-action@v1`
 - Android 图标：缩小启动器图标并恢复透明背景，确保完整显示灯泡主体
+- Android 安装包：按 ARM64、ARMv7、x86 和 x86_64 架构分别打包，避免通用 APK 包含四套原生库
 - Release 工作流：修复 Android 构建被错误执行为桌面 `tauri build --apk` 的问题
 - Release 工作流：支持重新构建并覆盖同版本已发布 Release 的安装包
 

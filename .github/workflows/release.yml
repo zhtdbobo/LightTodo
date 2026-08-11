@@ -198,7 +198,7 @@ jobs:
           prerelease: false
           uploadUpdaterJson: false
           mobile: android
-          args: --apk
+          args: --apk --split-per-abi
 
   finalize-release:
     needs: [build-windows, build-macos, build-android]
@@ -216,6 +216,10 @@ jobs:
           gh release download $tag --pattern latest.json --output latest.json --clobber
 
           $release = gh release view $tag --json assets | ConvertFrom-Json
+          $universalApks = @($release.assets | Where-Object { $_.name -match '_universal\.apk$' })
+          foreach ($asset in $universalApks) {
+            gh release delete-asset $tag $asset.name --yes
+          }
           $macUpdater = @($release.assets | Where-Object { $_.name -match '\.app\.tar\.gz$' })
           $macSignature = @($release.assets | Where-Object { $_.name -match '\.app\.tar\.gz\.sig$' })
           if ($macUpdater.Count -ne 1 -or $macSignature.Count -ne 1) {
