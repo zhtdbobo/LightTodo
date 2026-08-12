@@ -1,5 +1,5 @@
 {
-  "default": "icon-source.svg",
+  "default": "icon-android.svg",
   "bg_color": "#ffffff",
   "android_bg": "icon-background.svg",
   "android_fg": "icon-foreground.svg",

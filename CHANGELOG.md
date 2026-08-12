@@ -2,6 +2,18 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)规范。
 
+## [0.4.4] - 2026-08-13
+
+### Fixes
+- Android launcher icons now use an opaque white background, avoiding transparent or black edges on device launchers.
+- Android startup screens now use an explicit white background in light mode, dark mode, and Android 12+ splash resources.
+- Android launcher and round icons are regenerated for all density buckets.
+
+### Release
+- Includes Windows, macOS, and split-ABI Android packages from the release workflow.
+
+---
+
 ## [0.4.3] - 2026-08-12
 
 ### 修复与改进
