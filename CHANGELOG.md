@@ -5,7 +5,7 @@
 ## [0.4.4] - 2026-08-13
 
 ### Fixes
-- Android launcher icons now use an opaque white background, avoiding transparent or black edges on device launchers.
+- Android launcher icons now use a transparent background so only the cyan lightbulb is visible, without a white or colored backplate.
 - Android startup screens now use an explicit white background in light mode, dark mode, and Android 12+ splash resources.
 - Android launcher and round icons are regenerated for all density buckets.
 
