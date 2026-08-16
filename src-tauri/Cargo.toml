@@ -1,6 +1,6 @@
 [package]
 name = "lighttodo"
-version = "0.4.3"
+version = "0.4.5"
 description = "A lightweight note-taking app with WebDAV sync"
 authors = ["zhtdbobo"]
 edition = "2021"

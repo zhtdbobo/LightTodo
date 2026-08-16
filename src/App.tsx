@@ -1,29 +1,30 @@
 import {
   useState,
   useEffect,
-  useLayoutEffect,
   useRef,
   type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
-  type TouchEvent as ReactTouchEvent,
-  type ReactNode,
 } from "react";
 import { useNotesStore } from "./features/notes/stores/notesStore";
 import { getAllNotes, createNote, updateNote, deleteNote } from "./features/notes/hooks/useNotes";
-import { getAllGroups, createGroup, updateGroup, reorderGroups, deleteGroup } from "./features/notes/hooks/useGroups";
-import type { Note, Group, RepeatRule } from "./features/notes/types";
+import { getAllGroups, updateGroup, reorderGroups, deleteGroup } from "./features/notes/hooks/useGroups";
+import type { Note, Group } from "./features/notes/types";
 import { Window } from "@tauri-apps/api/window";
 import { listen as listenToEvent } from "@tauri-apps/api/event";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { syncNotes, cancelSync, type SyncProgress } from "./features/sync/api";
-import { formatTimestamp, calculateDuration } from "./features/notes/utils/timeFormat";
-import { DeadlineTimeInput } from "./features/notes/components/DeadlineTimeInput";
-import { SimpleMarkdown } from "./features/notes/components/SimpleMarkdown";
-import { belongsToTodayGroup, fromDateTimeLocalValue, getDeadlineStatus, toDateTimeLocalValue } from "./features/notes/utils/deadline";
+import { SyncStatusCard } from "./features/sync/components/SyncStatusCard";
+import { GroupTitle, groupTitleFont } from "./features/notes/components/GroupTitle";
+import { NoteItem } from "./features/notes/components/NoteItem";
+import {
+  PASSWORD_NOTE_MARKER,
+  buildPasswordTitleMarkdown,
+  generatePassword,
+  isPasswordNote,
+  type PasswordCharType,
+} from "./features/notes/utils/passwordNote";
+import { belongsToTodayGroup } from "./features/notes/utils/deadline";
 import {
   canClaimNoteFocus,
-  hasExceededClickMovement,
-  hasSelectedTextWithin,
 } from "./features/notes/utils/focus";
 import { moveGroupToTarget } from "./features/notes/utils/groupOrder";
 import { isMobileRuntime } from "./platform";
@@ -75,7 +76,6 @@ const SYNC_SUCCESS_MESSAGE_MS = 3000;
 const SYNC_ERROR_MESSAGE_MS = 4000;
 const MOBILE_SYNC_SUCCESS_MESSAGE_MS = 2500;
 const MOBILE_SYNC_ERROR_MESSAGE_MS = 3500;
-const MOBILE_LONG_PRESS_MS = 450;
 
 const groupNameCollator = new Intl.Collator("zh-CN", {
   sensitivity: "base",
@@ -109,27 +109,7 @@ const sortGroupsByDisplayOrder = (items: Group[]) =>
     return languageOrder || groupNameCollator.compare(a.name, b.name);
   });
 
-const groupTitleFont = {
-  fontFamily: '"Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif',
-};
 
-const getDefaultDeadlineDate = () => {
-  const now = new Date();
-  const deadline = new Date(now.getTime() + 60 * 60 * 1000);
-
-  if (
-    deadline.getFullYear() !== now.getFullYear()
-    || deadline.getMonth() !== now.getMonth()
-    || deadline.getDate() !== now.getDate()
-  ) {
-    deadline.setFullYear(now.getFullYear(), now.getMonth(), now.getDate());
-    deadline.setHours(23, 59, 0, 0);
-  } else {
-    deadline.setSeconds(0, 0);
-  }
-
-  return deadline;
-};
 
 const getNoteCreationKey = (
   options: Partial<Pick<Note, "groupId" | "deadline">>
@@ -141,280 +121,6 @@ const noteSelector = (noteId: string) => {
   return `textarea[data-note-id="${escaped}"]`;
 };
 
-interface GroupTitleProps {
-  group: Group;
-  noteCount: number;
-  isExpanded: boolean;
-  onRename: (id: string, name: string) => void;
-  onDelete: () => void;
-  onAdd: () => void;
-  onToggle: () => void;
-  onMoveUp: () => void;
-  onMoveDown: () => void;
-  canMoveUp: boolean;
-  canMoveDown: boolean;
-  isDragging: boolean;
-  isDragTarget: boolean;
-  onDragStart: (groupId: string) => void;
-  onDragMove: (clientX: number, clientY: number) => void;
-  onDragEnd: () => void;
-  onDragCancel: () => void;
-}
-
-const GroupTitle = ({
-  group,
-  noteCount,
-  isExpanded,
-  onRename,
-  onDelete,
-  onAdd,
-  onToggle,
-  onMoveUp,
-  onMoveDown,
-  canMoveUp,
-  canMoveDown,
-  isDragging,
-  isDragTarget,
-  onDragStart,
-  onDragMove,
-  onDragEnd,
-  onDragCancel,
-}: GroupTitleProps) => {
-  const [isEditing, setIsEditing] = useState(false);
-  const [editName, setEditName] = useState(group.name);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (isEditing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [isEditing]);
-
-  useEffect(() => {
-    if (!isEditing) {
-      setEditName(group.name);
-    }
-  }, [group.name, isEditing]);
-
-  const handleSave = () => {
-    if (editName.trim() && editName !== group.name) {
-      onRename(group.id, editName.trim());
-    } else {
-      setEditName(group.name);
-    }
-    setIsEditing(false);
-  };
-
-  return (
-    <div className={`mb-2 -ml-2 flex items-center justify-between group rounded py-0.5 transition-colors ${
-      isDragging ? "opacity-50" : isDragTarget ? "bg-cyan-50 ring-1 ring-cyan-200" : ""
-    }`}>
-      <div
-        className="flex items-center gap-1.5 min-w-0 flex-1 text-[13px] text-gray-600"
-        style={groupTitleFont}
-      >
-        <button
-          type="button"
-          onClick={onToggle}
-          className="inline-flex flex-shrink-0 items-center justify-center text-[9px] text-gray-400 hover:text-gray-600"
-          aria-label={isExpanded ? `折叠分组 ${group.name}` : `展开分组 ${group.name}`}
-          aria-expanded={isExpanded}
-        >
-          <span
-            className="inline-block transition-transform"
-            style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
-          >
-            ▶
-          </span>
-        </button>
-        {isEditing ? (
-          <input
-            ref={inputRef}
-            type="text"
-            value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-            onBlur={handleSave}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                handleSave();
-              } else if (e.key === 'Escape') {
-                setEditName(group.name);
-                setIsEditing(false);
-              }
-            }}
-            className="flex-1 min-w-0 bg-white border border-cyan-400 rounded px-1 py-0.5 text-gray-700 outline-none"
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={onToggle}
-            className="flex min-w-0 flex-1 items-center gap-1.5 text-left hover:text-gray-700"
-            aria-expanded={isExpanded}
-          >
-            <span
-              onDoubleClick={(event) => {
-                event.stopPropagation();
-                setIsEditing(true);
-              }}
-              className="truncate"
-              title="双击编辑"
-            >
-              {group.name}
-            </span>
-            <span className="flex-shrink-0 text-[11px] text-gray-400">({noteCount})</span>
-          </button>
-        )}
-      </div>
-      <div className="flex items-center gap-1.5">
-        {isMobileRuntime ? (
-          <button
-            type="button"
-            onPointerDown={(event: ReactPointerEvent<HTMLButtonElement>) => {
-              if (event.pointerType === "mouse" && event.button !== 0) return;
-              event.currentTarget.setPointerCapture(event.pointerId);
-              onDragStart(group.id);
-            }}
-            onPointerMove={(event: ReactPointerEvent<HTMLButtonElement>) => {
-              onDragMove(event.clientX, event.clientY);
-            }}
-            onPointerUp={(event: ReactPointerEvent<HTMLButtonElement>) => {
-              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                event.currentTarget.releasePointerCapture(event.pointerId);
-              }
-              onDragEnd();
-            }}
-            onPointerCancel={onDragCancel}
-            className="mobile-group-drag-handle inline-flex h-8 w-8 flex-shrink-0 touch-none items-center justify-center text-lg text-gray-400 active:text-cyan-600"
-            title="拖动分组"
-            aria-label={`拖动分组 ${group.name}`}
-          >
-            ⠿
-          </button>
-        ) : (
-          <>
-            <button
-              type="button"
-              onClick={onMoveUp}
-              disabled={!canMoveUp}
-              className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-cyan-500 disabled:text-gray-200 disabled:hover:text-gray-200 text-xs transition-opacity"
-              title="上移分组"
-              aria-label={`上移分组 ${group.name}`}
-            >
-              ↑
-            </button>
-            <button
-              type="button"
-              onClick={onMoveDown}
-              disabled={!canMoveDown}
-              className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-cyan-500 disabled:text-gray-200 disabled:hover:text-gray-200 text-xs transition-opacity"
-              title="下移分组"
-              aria-label={`下移分组 ${group.name}`}
-            >
-              ↓
-            </button>
-          </>
-        )}
-        <button
-          type="button"
-          onClick={onAdd}
-          onMouseDown={preserveBlankDraftOnCreateMouseDown}
-          data-note-create-button="true"
-          className="opacity-0 group-hover:opacity-100 text-cyan-400 hover:text-cyan-500 text-sm transition-opacity"
-          title="新建待办"
-          aria-label={`在分组 ${group.name} 中新建待办`}
-        >
-          +
-        </button>
-        <button
-          type="button"
-          onClick={onDelete}
-          className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-500 text-xs transition-opacity"
-          title="删除分组"
-          aria-label={`删除分组 ${group.name}`}
-        >
-          ✕
-        </button>
-      </div>
-    </div>
-  );
-};
-
-interface StableTodoItemProps {
-  note: Note;
-  render: (note: Note) => ReactNode;
-}
-
-// Keep each editor's Hook state in its own keyed component.  Calling the
-// render callback directly from App would execute all of the item's Hooks in
-// the parent component, so adding/removing or reordering a note could change
-// the parent's Hook order and reset an editor mid-typing.
-const StableTodoItem = ({ note, render }: StableTodoItemProps) => {
-  const renderRef = useRef(render);
-  renderRef.current = render;
-  return renderRef.current(note);
-};
-
-const PASSWORD_CHARSETS = {
-  upper: "ABCDEFGHJKLMNPQRSTUVWXYZ",
-  lower: "abcdefghijkmnpqrstuvwxyz",
-  number: "23456789",
-  symbol: "!@#$%&*",
-} as const;
-
-type PasswordCharType = keyof typeof PASSWORD_CHARSETS;
-
-const secureRandomIndex = (maxExclusive: number) => {
-  if (!Number.isInteger(maxExclusive) || maxExclusive <= 0) {
-    throw new Error("Invalid random range");
-  }
-  const range = 0x1_0000_0000;
-  const limit = Math.floor(range / maxExclusive) * maxExclusive;
-  const values = new Uint32Array(1);
-  do {
-    crypto.getRandomValues(values);
-  } while (values[0] >= limit);
-  return values[0] % maxExclusive;
-};
-
-const generatePassword = (length: number, charTypes: PasswordCharType[]) => {
-  const selectedTypes = charTypes.length > 0
-    ? Array.from(new Set(charTypes))
-    : (["upper", "lower", "number"] satisfies PasswordCharType[]);
-  const safeLength = Math.max(selectedTypes.length, Math.min(128, Math.floor(length)));
-  const charset = selectedTypes.map((type) => PASSWORD_CHARSETS[type]).join("");
-  const result = selectedTypes.map((type) => {
-    const values = PASSWORD_CHARSETS[type];
-    return values[secureRandomIndex(values.length)];
-  });
-
-  while (result.length < safeLength) {
-    result.push(charset[secureRandomIndex(charset.length)]);
-  }
-  for (let index = result.length - 1; index > 0; index -= 1) {
-    const swapIndex = secureRandomIndex(index + 1);
-    [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
-  }
-  return result.join("");
-};
-
-/** 密码条目：title 为代码块，第一行备注、第二行密码 */
-const PASSWORD_NOTE_MARKER = "password";
-
-const buildPasswordTitleMarkdown = (remark: string, password: string) =>
-  `\`\`\`\n${remark}\n${password}\n\`\`\``;
-
-const parsePasswordTitleMarkdown = (title: string) => {
-  const fenced = title.match(/^```(?:\w*)?\n?([\s\S]*?)\n?```\s*$/);
-  const body = (fenced ? fenced[1] : title).replace(/\r\n/g, "\n");
-  const lines = body.split("\n");
-  const remark = lines[0] ?? "";
-  const password = lines.slice(1).join("\n");
-  return { remark, password };
-};
-
-const isPasswordNote = (note: Pick<Note, "content">) =>
-  note.content === PASSWORD_NOTE_MARKER;
 
 function App() {
   const { notes, setNotes, addNote, updateNoteInStore, removeNote } = useNotesStore();
@@ -1314,1000 +1020,33 @@ function App() {
     return [...newItems, ...existingItems];
   };
 
-  // 优先级标识
-  const getPriorityEmoji = (priority: number) => {
-    switch (priority) {
-      case 2: return "🔴"; // 高
-      case 1: return "🟡"; // 中
-      default: return ""; // 低/无
-    }
-  };
+  const renderTodoItem = (note: Note) => (
+    <NoteItem
+      key={note.id}
+      note={note}
+      notes={notes}
+      groups={groups}
+      currentTime={currentTime}
+      setGroups={setGroups}
+      setNotes={setNotes}
+      updateNoteInStore={updateNoteInStore}
+      markNotesMutation={markNotesMutation}
+      markGroupsMutation={markGroupsMutation}
+      onGroupCreated={(group) => {
+        setGroups((currentGroups) => sortGroupsByDisplayOrder([...currentGroups, group]));
+        expandActiveGroup(group.id);
+      }}
+      handleToggleCompleted={handleToggleCompleted}
+      handleCyclePriority={handleCyclePriority}
+      handleEditTitle={handleEditTitle}
+      handleDelete={handleDelete}
+      handleCreateNote={handleCreateNote}
+      loadNotes={loadNotes}
+      loadGroups={loadGroups}
+      locallyDeletedGroupIdsRef={locallyDeletedGroupIdsRef}
+    />
+  );
 
-  // 待办项视图：由 StableTodoItem 承载 hooks，重排分组时保留编辑状态
-  const renderTodoItem = (note: Note) => {
-    const isPwd = isPasswordNote(note);
-    const hasDecryptionError = Boolean(note.decryptionError);
-    const parsedPwd = isPwd ? parsePasswordTitleMarkdown(note.title) : null;
-    const [localTitle, setLocalTitle] = useState(
-      isPwd ? (parsedPwd?.remark ?? "") : note.title
-    );
-    const [localPassword, setLocalPassword] = useState(
-      isPwd ? (parsedPwd?.password ?? "") : ""
-    );
-    const composingRef = useRef(false);
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const previewMouseGestureRef = useRef<{
-      startX: number;
-      startY: number;
-    } | null>(null);
-    const previewTouchGestureRef = useRef<{
-      startX: number;
-      startY: number;
-      startedAt: number;
-      suppressNextClick: boolean;
-    } | null>(null);
-    const [showMenu, setShowMenu] = useState(false);
-    const [showGroupInput, setShowGroupInput] = useState(false);
-    const [deadlineDraftValue, setDeadlineDraftValue] = useState(toDateTimeLocalValue(note.deadline));
-    const [repeatRuleDraft, setRepeatRuleDraft] = useState<RepeatRule | null>(note.repeatRule ?? null);
-    const [showDeadlinePicker, setShowDeadlinePicker] = useState(false);
-    const [deadlinePickerMonth, setDeadlinePickerMonth] = useState(
-      () => new Date(note.deadline ?? Date.now())
-    );
-    const [newGroupName, setNewGroupName] = useState("");
-    const [isExpanded, setIsExpanded] = useState(false);
-    const [isEditing, setIsEditing] = useState(false);
-    const editSessionRef = useRef(0);
-    const [openMenuUpward, setOpenMenuUpward] = useState(false);
-    const [deleteConfirm, setDeleteConfirm] = useState<{ groupId: string; groupName: string; noteCount: number } | null>(null);
-    const menuRef = useRef<HTMLDivElement>(null);
-    const menuButtonRef = useRef<HTMLButtonElement>(null);
-
-    // 点击外部关闭菜单
-    useEffect(() => {
-      const handleClickOutside = (event: MouseEvent) => {
-        if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-          setShowMenu(false);
-          setShowGroupInput(false);
-          setShowDeadlinePicker(false);
-          setDeleteConfirm(null);
-        }
-      };
-
-      if (showMenu) {
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-      }
-    }, [showMenu]);
-
-    // 自动调整 textarea 高度的函数
-    const adjustHeight = () => {
-      const textarea = textareaRef.current;
-      if (textarea) {
-        textarea.style.height = 'auto';
-        textarea.style.height = textarea.scrollHeight + 'px';
-      }
-    };
-
-    // 同步外部变化到本地状态
-    useEffect(() => {
-      // 编辑期间以本地输入为准，避免自动同步或其他列表刷新把正在输入的内容覆盖掉。
-      if (isEditing) return;
-
-      if (isPasswordNote(note)) {
-        const parsed = parsePasswordTitleMarkdown(note.title);
-        setLocalTitle(parsed.remark);
-        setLocalPassword(parsed.password);
-      } else {
-        setLocalTitle(note.title);
-        setLocalPassword("");
-      }
-    }, [note.title, note.content, isEditing]);
-
-    useEffect(() => {
-      const nextDeadlineValue = toDateTimeLocalValue(note.deadline);
-      setDeadlineDraftValue(nextDeadlineValue);
-      setDeadlinePickerMonth(new Date(note.deadline ?? Date.now()));
-      setRepeatRuleDraft(note.repeatRule ?? null);
-    }, [note.deadline, note.repeatRule]);
-
-    // 当内容变化时调整高度
-    useEffect(() => {
-      adjustHeight();
-    }, [localTitle, localPassword, note.title, isEditing]);
-
-    useLayoutEffect(() => {
-      if (isEditing) {
-        const textarea = textareaRef.current;
-        if (textarea) {
-          if (document.activeElement !== textarea) {
-            textarea.focus({ preventScroll: true });
-          }
-          const end = textarea.value.length;
-          textarea.setSelectionRange(end, end);
-        }
-        adjustHeight();
-      }
-    }, [isEditing]);
-
-    const toggleMenu = () => {
-      if (!showMenu) {
-        const rect = menuButtonRef.current?.getBoundingClientRect();
-        setOpenMenuUpward(rect ? window.innerHeight - rect.bottom < 260 : false);
-        setShowGroupInput(false);
-        setShowDeadlinePicker(false);
-        setDeleteConfirm(null);
-      }
-      setShowMenu((current) => !current);
-    };
-
-    const handlePasswordEditorChange = (value: string) => {
-      // 编辑态下 textarea 内是「代码块展开内容」：第 1 行备注，第 2 行起密码
-      const normalized = value.replace(/\r\n/g, "\n");
-      const lines = normalized.split("\n");
-      setLocalTitle(lines[0] ?? "");
-      setLocalPassword(lines.slice(1).join("\n"));
-    };
-
-    const beginEditing = () => {
-      // 每次重新获得焦点都开启新的编辑会话，避免旧的异步 blur 保存完成后
-      // 把用户已经重新输入的内容关闭或删除。
-      editSessionRef.current += 1;
-      setIsEditing(true);
-    };
-
-    const handlePreviewMouseDown = (event: ReactMouseEvent<HTMLDivElement>) => {
-      previewMouseGestureRef.current = event.button === 0
-        ? { startX: event.clientX, startY: event.clientY }
-        : null;
-    };
-
-    const handlePreviewTouchStart = (event: ReactTouchEvent<HTMLDivElement>) => {
-      const touch = event.touches[0];
-      if (!touch) return;
-      previewTouchGestureRef.current = {
-        startX: touch.clientX,
-        startY: touch.clientY,
-        startedAt: Date.now(),
-        suppressNextClick: false,
-      };
-    };
-
-    const handlePreviewTouchMove = (event: ReactTouchEvent<HTMLDivElement>) => {
-      const gesture = previewTouchGestureRef.current;
-      const touch = event.touches[0];
-      if (!gesture || !touch || gesture.suppressNextClick) return;
-      gesture.suppressNextClick = hasExceededClickMovement(
-        gesture.startX,
-        gesture.startY,
-        touch.clientX,
-        touch.clientY,
-        6
-      );
-    };
-
-    const finishPreviewTouch = (element: HTMLDivElement) => {
-      const gesture = previewTouchGestureRef.current;
-      if (!gesture) return;
-      gesture.suppressNextClick = gesture.suppressNextClick
-        || Date.now() - gesture.startedAt >= MOBILE_LONG_PRESS_MS
-        || hasSelectedTextWithin(element);
-    };
-
-    const shouldKeepPreviewSelection = (
-      element: HTMLDivElement,
-      clientX: number,
-      clientY: number
-    ) => {
-      const gesture = previewMouseGestureRef.current;
-      previewMouseGestureRef.current = null;
-      const wasDrag = gesture !== null && hasExceededClickMovement(
-        gesture.startX,
-        gesture.startY,
-        clientX,
-        clientY
-      );
-
-      const wasMobileSelectionGesture = isMobileRuntime
-        && (previewTouchGestureRef.current?.suppressNextClick ?? false);
-      previewTouchGestureRef.current = null;
-
-      return wasDrag || wasMobileSelectionGesture || hasSelectedTextWithin(element);
-    };
-
-    const handleLocalBlur = async () => {
-      const editSession = editSessionRef.current;
-
-      if (isPasswordNote(note)) {
-        const nextTitle = buildPasswordTitleMarkdown(localTitle, localPassword);
-        const isBlankDraft = !localTitle.trim() && !localPassword.trim();
-        if (editSessionRef.current === editSession && isBlankDraft) {
-          await handleDelete(note, true);
-          return;
-        }
-        if (nextTitle !== note.title) {
-          const saved = await handleEditTitle(note, nextTitle);
-          if (!saved) return;
-        }
-        if (editSessionRef.current === editSession) {
-          setIsEditing(false);
-        }
-        return;
-      }
-
-      // 失焦时才保存到数据库
-      if (editSessionRef.current === editSession && !localTitle.trim()) {
-        await handleDelete(note, true);
-        return;
-      }
-      if (localTitle.trim() !== note.title) {
-        const saved = await handleEditTitle(note, localTitle);
-        if (!saved) return;
-      }
-
-      if (editSessionRef.current === editSession) {
-        setIsEditing(false);
-      }
-    };
-
-    const handleMoveToGroup = async (groupId: string | null) => {
-      markNotesMutation();
-      try {
-        const updated = await updateNote({
-          id: note.id,
-          ...(groupId === null
-            ? { clearGroup: true }
-            : { groupId }),
-        });
-        updateNoteInStore(updated);
-        setShowMenu(false);
-        setShowGroupInput(false);
-      } catch (error) {
-        console.error("Failed to move to group:", error);
-      }
-    };
-
-    const handleDeadlineChange = async (
-      value: string,
-      repeatRule = repeatRuleDraft,
-    ): Promise<boolean> => {
-      markNotesMutation();
-      try {
-        const deadline = fromDateTimeLocalValue(value);
-        const updated = await updateNote({
-          id: note.id,
-          deadline,
-          clearDeadline: deadline == null,
-          repeatRule: deadline == null ? null : repeatRule,
-          clearRepeatRule: deadline == null,
-        });
-        updateNoteInStore(updated);
-        return true;
-      } catch (error) {
-        console.error("Failed to update deadline:", error);
-        setDeadlineDraftValue(toDateTimeLocalValue(note.deadline));
-        setRepeatRuleDraft(note.repeatRule ?? null);
-        return false;
-      }
-    };
-
-    const handleRepeatRuleChange = async (value: RepeatRule | null) => {
-      setRepeatRuleDraft(value);
-      const draftDeadline = fromDateTimeLocalValue(deadlineDraftValue);
-      if (!deadlineDraftValue || note.deadline == null || draftDeadline !== note.deadline) return;
-      markNotesMutation();
-      try {
-        const updated = await updateNote({
-          id: note.id,
-          repeatRule: value,
-          clearRepeatRule: value == null,
-        });
-        updateNoteInStore(updated);
-      } catch (error) {
-        console.error("Failed to update repeat rule:", error);
-        setRepeatRuleDraft(note.repeatRule ?? null);
-      }
-    };
-
-    const getDeadlineDraftDate = () => {
-      const timestamp = fromDateTimeLocalValue(deadlineDraftValue);
-      const date = timestamp == null ? getDefaultDeadlineDate() : new Date(timestamp);
-      date.setSeconds(0, 0);
-      return date;
-    };
-    const deadlineDraftDate = getDeadlineDraftDate();
-
-    const updateDeadlineDraftDate = (date: Date) => {
-      date.setSeconds(0, 0);
-      setDeadlineDraftValue(toDateTimeLocalValue(date.getTime()));
-      setDeadlinePickerMonth(new Date(date.getFullYear(), date.getMonth(), 1));
-    };
-
-    const selectDeadlineDay = (day: number) => {
-      const next = getDeadlineDraftDate();
-      next.setFullYear(deadlinePickerMonth.getFullYear(), deadlinePickerMonth.getMonth(), day);
-      updateDeadlineDraftDate(next);
-    };
-
-    const shiftDeadlinePickerMonth = (offset: number) => {
-      setDeadlinePickerMonth(
-        (current) => new Date(current.getFullYear(), current.getMonth() + offset, 1)
-      );
-    };
-
-    const setDeadlineTimePart = (part: "hour" | "minute", value: string) => {
-      if (!/^\d{1,2}$/.test(value)) return;
-      const parsed = Number(value);
-
-      const next = getDeadlineDraftDate();
-      if (part === "hour") {
-        next.setHours(Math.max(0, Math.min(23, parsed)));
-      } else {
-        next.setMinutes(Math.max(0, Math.min(59, parsed)));
-      }
-      updateDeadlineDraftDate(next);
-    };
-
-    const handleToggleDeadlinePicker = () => {
-      const nextOpen = !showDeadlinePicker;
-      if (nextOpen && !deadlineDraftValue) {
-        const today = new Date();
-        setDeadlinePickerMonth(new Date(today.getFullYear(), today.getMonth(), 1));
-      }
-      setShowDeadlinePicker(nextOpen);
-    };
-
-    const handleConfirmDeadline = async () => {
-      const value = deadlineDraftValue || toDateTimeLocalValue(deadlineDraftDate.getTime());
-      if (!await handleDeadlineChange(value)) return;
-      setShowMenu(false);
-      setShowGroupInput(false);
-      setShowDeadlinePicker(false);
-      setDeleteConfirm(null);
-    };
-
-    const handleClearDeadline = async () => {
-      setDeadlineDraftValue("");
-      setRepeatRuleDraft(null);
-      if (!await handleDeadlineChange("", null)) {
-        setDeadlineDraftValue(toDateTimeLocalValue(note.deadline));
-        return;
-      }
-      setShowMenu(false);
-      setShowGroupInput(false);
-      setShowDeadlinePicker(false);
-      setDeleteConfirm(null);
-    };
-
-    const handleCreateAndMoveToGroup = async () => {
-      if (!newGroupName.trim()) return;
-
-      markGroupsMutation();
-      try {
-        const newGroup = await createGroup({ name: newGroupName });
-        setGroups((currentGroups) => sortGroupsByDisplayOrder([...currentGroups, newGroup]));
-        expandActiveGroup(newGroup.id);
-        await handleMoveToGroup(newGroup.id);
-        setNewGroupName("");
-      } catch (error) {
-        console.error("Failed to create group:", error);
-      }
-    };
-
-    const todayDate = new Date(currentTime);
-    const deadlineDisplayValue = deadlineDraftValue
-      ? deadlineDraftValue.replace("T", " ")
-      : "选择截止时间";
-    const deadlineMonthLabel = deadlinePickerMonth.toLocaleDateString("zh-CN", {
-      year: "numeric",
-      month: "long",
-    });
-    const firstDayOfDeadlineMonth = new Date(
-      deadlinePickerMonth.getFullYear(),
-      deadlinePickerMonth.getMonth(),
-      1
-    );
-    const daysInDeadlineMonth = new Date(
-      deadlinePickerMonth.getFullYear(),
-      deadlinePickerMonth.getMonth() + 1,
-      0
-    ).getDate();
-    const deadlineCalendarDays: Array<number | null> = [
-      ...Array.from({ length: firstDayOfDeadlineMonth.getDay() }, () => null),
-      ...Array.from({ length: daysInDeadlineMonth }, (_, index) => index + 1),
-    ];
-    while (deadlineCalendarDays.length % 7 !== 0) {
-      deadlineCalendarDays.push(null);
-    }
-    const deadlineHour = String(deadlineDraftDate.getHours()).padStart(2, "0");
-    const deadlineMinute = String(deadlineDraftDate.getMinutes()).padStart(2, "0");
-
-    return (
-      <div className="space-y-0.5">
-        <div
-          className={`flex items-start gap-2.5 py-1 group relative`}
-        >
-          <input
-            type="checkbox"
-            checked={note.isCompleted}
-            onChange={() => handleToggleCompleted(note)}
-            disabled={hasDecryptionError}
-            className="mt-0.5 w-4 h-4 cursor-pointer flex-shrink-0 accent-cyan-400 disabled:cursor-not-allowed disabled:opacity-40"
-          />
-          {isPwd ? null : (
-            <button
-              onClick={() => handleCyclePriority(note)}
-              className="text-xs transition flex-shrink-0 mt-0.5"
-              title="切换优先级"
-            >
-              {getPriorityEmoji(note.priority) || "⚪"}
-            </button>
-          )}
-          <div className="flex-1 min-w-0 space-y-0.5">
-          {isPwd ? (
-            hasDecryptionError ? (
-              <div
-                className="w-full min-w-0 rounded-sm text-sm leading-snug text-red-500"
-                title={note.decryptionError ?? undefined}
-              >
-                {note.title}
-              </div>
-            ) : isEditing ? (
-              <div className="password-code-editor w-full min-w-0">
-                <textarea
-                  ref={textareaRef}
-                  data-note-id={note.id}
-                  value={`${localTitle}\n${localPassword}`}
-                  onChange={(e) => {
-                    handlePasswordEditorChange(e.target.value);
-                    adjustHeight();
-                  }}
-                  onBlur={handleLocalBlur}
-                  onFocus={beginEditing}
-                  onCompositionStart={() => {
-                    composingRef.current = true;
-                  }}
-                  onCompositionEnd={(e) => {
-                    composingRef.current = false;
-                    handlePasswordEditorChange((e.target as HTMLTextAreaElement).value);
-                  }}
-                  onKeyDown={(e) => {
-                    // Enter 在代码块内换行；Ctrl/Cmd+Enter 结束编辑
-                    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !composingRef.current) {
-                      e.preventDefault();
-                      void handleLocalBlur();
-                    }
-                  }}
-                  className="w-full bg-transparent border-none outline-none text-sm resize-none overflow-hidden text-gray-700 font-mono leading-snug"
-                  placeholder={"备注\n密码"}
-                  autoComplete="off"
-                  spellCheck="false"
-                  rows={2}
-                  style={{ minHeight: "40px" }}
-                />
-              </div>
-            ) : (
-              <div
-                role="button"
-                tabIndex={0}
-                onMouseDown={handlePreviewMouseDown}
-                onTouchStart={isMobileRuntime ? handlePreviewTouchStart : undefined}
-                onTouchMove={isMobileRuntime ? handlePreviewTouchMove : undefined}
-                onTouchEnd={isMobileRuntime
-                  ? (event) => finishPreviewTouch(event.currentTarget)
-                  : undefined}
-                onTouchCancel={isMobileRuntime
-                  ? (event) => finishPreviewTouch(event.currentTarget)
-                  : undefined}
-                onClick={(event) => {
-                  if (shouldKeepPreviewSelection(
-                    event.currentTarget,
-                    event.clientX,
-                    event.clientY
-                  )) return;
-                  beginEditing();
-                }}
-                onDoubleClick={beginEditing}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === "F2") {
-                    event.preventDefault();
-                    beginEditing();
-                  }
-                }}
-                className={`simple-markdown-preview w-full min-w-0 cursor-text rounded-sm text-sm leading-snug outline-none focus:ring-1 focus:ring-cyan-200 ${
-                  note.isCompleted ? "line-through text-gray-300 cursor-pointer" : "text-gray-700"
-                }`}
-              >
-                <SimpleMarkdown text={buildPasswordTitleMarkdown(localTitle, localPassword)} />
-              </div>
-            )
-          ) : isEditing || !localTitle.trim() ? (
-          <textarea
-            ref={textareaRef}
-            data-note-id={note.id}
-            value={localTitle}
-            onChange={(e) => {
-              setLocalTitle(e.target.value);
-              // 自动调整高度
-              adjustHeight();
-            }}
-            onBlur={handleLocalBlur}
-            onFocus={beginEditing}
-            onCompositionStart={() => {
-              composingRef.current = true;
-            }}
-            onCompositionEnd={(e) => {
-              composingRef.current = false;
-              setLocalTitle((e.target as HTMLTextAreaElement).value);
-            }}
-            onKeyDown={async (e) => {
-              // Enter 键保存当前待办并创建新待办（不换行）
-              if (e.key === 'Enter' && !e.shiftKey && !composingRef.current) {
-                e.preventDefault();
-
-                const focusOrigin = e.currentTarget;
-                const currentContent = localTitle.trim();
-
-                // 如果当前待办为空，强制创建新待办
-                if (!currentContent) {
-                  await handleCreateNote(true, {
-                    groupId: note.groupId,
-                    deadline: note.deadline,
-                  }, focusOrigin);
-                  return;
-                }
-
-                // 先保存当前待办（如果有修改）
-                if (currentContent !== note.title) {
-                  const saved = await handleEditTitle(note, localTitle);
-                  if (!saved) return;
-                }
-
-                // 强制创建新待办
-                await handleCreateNote(true, {
-                  groupId: note.groupId,
-                  deadline: note.deadline,
-                }, focusOrigin);
-              }
-            }}
-            onClick={() => {
-              // 点击 textarea 时，如果是已完成的待办，展开/折叠详情
-              if (note.isCompleted) {
-                setIsExpanded(!isExpanded);
-              }
-            }}
-            className={`w-full bg-transparent border-none outline-none text-sm resize-none overflow-hidden ${
-              note.isCompleted
-                ? "line-through text-gray-300"
-                : "text-gray-700"
-            } placeholder:text-gray-300 placeholder:opacity-50 leading-snug`}
-            placeholder="记点什么..."
-            autoComplete="off"
-            spellCheck="false"
-            rows={1}
-            style={{ minHeight: '20px' }}
-          />
-          ) : (
-            <div
-              role="button"
-              tabIndex={0}
-              onMouseDown={handlePreviewMouseDown}
-              onTouchStart={isMobileRuntime ? handlePreviewTouchStart : undefined}
-              onTouchMove={isMobileRuntime ? handlePreviewTouchMove : undefined}
-              onTouchEnd={isMobileRuntime
-                ? (event) => finishPreviewTouch(event.currentTarget)
-                : undefined}
-              onTouchCancel={isMobileRuntime
-                ? (event) => finishPreviewTouch(event.currentTarget)
-                : undefined}
-              onClick={(event) => {
-                if (shouldKeepPreviewSelection(
-                  event.currentTarget,
-                  event.clientX,
-                  event.clientY
-                )) return;
-
-                if (note.isCompleted) {
-                  setIsExpanded(!isExpanded);
-                  return;
-                }
-
-                beginEditing();
-              }}
-              onDoubleClick={beginEditing}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === "F2") {
-                  event.preventDefault();
-                  beginEditing();
-                }
-              }}
-              className={`simple-markdown-preview w-full min-w-0 cursor-text rounded-sm text-sm leading-snug outline-none focus:ring-1 focus:ring-cyan-200 ${
-                note.isCompleted
-                  ? "line-through text-gray-300 cursor-pointer"
-                  : "text-gray-700"
-              }`}
-            >
-              <SimpleMarkdown text={localTitle} />
-            </div>
-          )}
-
-          {note.deadline != null && (() => {
-            const status = getDeadlineStatus(note.deadline, currentTime);
-            return (
-              <div className={`text-[10px] leading-none ${status.overdue ? "text-red-500" : "text-orange-500"}`}>
-                {status.label}
-              </div>
-            );
-          })()}
-          </div>
-
-          {/* 右侧操作 */}
-          <div className="relative flex-shrink-0" ref={menuRef}>
-            <button
-              ref={menuButtonRef}
-              onClick={toggleMenu}
-              className="opacity-0 group-hover:opacity-100 text-sm transition text-gray-400 hover:text-gray-600"
-              title="更多操作"
-            >
-              ⋯
-            </button>
-
-            {/* 下拉菜单 */}
-            {showMenu && (
-              <div className={`absolute right-0 ${openMenuUpward ? "bottom-6" : "top-6"} bg-white border border-gray-200 rounded-md shadow-lg py-0.5 z-50 w-60 max-w-[calc(100vw-2rem)] max-h-[min(420px,calc(100vh-80px))] overflow-y-auto text-xs`}>
-                {hasDecryptionError ? (
-                  <button
-                    onClick={() => {
-                      void handleDelete(note);
-                      setShowMenu(false);
-                    }}
-                    className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-red-600"
-                  >
-                    删除损坏的密码待办
-                  </button>
-                ) : note.isCompleted ? (
-                  <>
-                    <button
-                      onClick={() => {
-                        handleToggleCompleted(note);
-                        setShowMenu(false);
-                      }}
-                      className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700"
-                    >
-                      恢复
-                    </button>
-                    <div className="border-t border-gray-100"></div>
-                    <div className="px-3 py-1 text-gray-500">移动到</div>
-                    <button
-                      onClick={() => void handleMoveToGroup(null)}
-                      disabled={!note.groupId}
-                      className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700 disabled:text-gray-300"
-                    >
-                      未分类
-                    </button>
-                    {groups.map((group) => (
-                      <button
-                        key={group.id}
-                        onClick={() => void handleMoveToGroup(group.id)}
-                        className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700"
-                      >
-                        {group.name}
-                      </button>
-                    ))}
-                    <div className="border-t border-gray-100"></div>
-                    <button
-                      onClick={() => {
-                        handleDelete(note);
-                        setShowMenu(false);
-                      }}
-                      className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-red-600"
-                    >
-                      删除
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    {!isPwd && <div
-                      className="px-3 py-1.5 border-b border-gray-100"
-                      onMouseDown={() => {
-                        setShowGroupInput(false);
-                        setDeleteConfirm(null);
-                      }}
-                      onFocusCapture={() => {
-                        setShowGroupInput(false);
-                        setDeleteConfirm(null);
-                      }}
-                    >
-                      <label className="block text-gray-500 mb-1">截止时间</label>
-                      <button
-                        type="button"
-                        aria-label="截止时间"
-                        onClick={handleToggleDeadlinePicker}
-                        className="w-full border border-gray-200 rounded px-2 py-1 text-left text-gray-700 hover:bg-gray-50"
-                      >
-                        <span className={deadlineDraftValue ? "" : "text-gray-400"}>
-                          {deadlineDisplayValue}
-                        </span>
-                      </button>
-                      {showDeadlinePicker && (
-                        <div className="mt-1 rounded-md border border-gray-200 bg-white p-2 shadow-sm">
-                          <div className="flex items-center justify-between mb-1">
-                            <button
-                              type="button"
-                              onClick={() => shiftDeadlinePickerMonth(-1)}
-                              className="w-7 h-6 rounded border border-gray-200 text-gray-500 hover:bg-gray-50"
-                              aria-label="上个月"
-                            >
-                              ‹
-                            </button>
-                            <div className="text-gray-700 font-medium">{deadlineMonthLabel}</div>
-                            <button
-                              type="button"
-                              onClick={() => shiftDeadlinePickerMonth(1)}
-                              className="w-7 h-6 rounded border border-gray-200 text-gray-500 hover:bg-gray-50"
-                              aria-label="下个月"
-                            >
-                              ›
-                            </button>
-                          </div>
-                          <div className="grid grid-cols-7 gap-0.5 text-center text-[10px] text-gray-400 mb-0.5">
-                            {["日", "一", "二", "三", "四", "五", "六"].map((day) => (
-                              <div key={day}>{day}</div>
-                            ))}
-                          </div>
-                          <div className="grid grid-cols-7 gap-0.5">
-                            {deadlineCalendarDays.map((day, index) => {
-                              const isToday = day != null
-                                && todayDate.getFullYear() === deadlinePickerMonth.getFullYear()
-                                && todayDate.getMonth() === deadlinePickerMonth.getMonth()
-                                && todayDate.getDate() === day;
-                              const selected = day != null && (
-                                deadlineDraftValue
-                                  ? deadlineDraftDate.getFullYear() === deadlinePickerMonth.getFullYear()
-                                    && deadlineDraftDate.getMonth() === deadlinePickerMonth.getMonth()
-                                    && deadlineDraftDate.getDate() === day
-                                  : isToday
-                              );
-
-                              return day == null ? (
-                                <div key={`empty-${index}`} className="h-6" />
-                              ) : (
-                                <button
-                                  key={day}
-                                  type="button"
-                                  onClick={() => selectDeadlineDay(day)}
-                                  className={`h-6 rounded text-center ${
-                                    selected
-                                      ? "bg-cyan-400 text-white"
-                                      : isToday
-                                        ? "border border-cyan-300 bg-cyan-50 font-medium text-cyan-600 hover:bg-cyan-100"
-                                        : "text-gray-700 hover:bg-gray-50"
-                                  }`}
-                                  aria-current={isToday ? "date" : undefined}
-                                  aria-pressed={selected}
-                                >
-                                  {day}
-                                </button>
-                              );
-                            })}
-                          </div>
-                          <div className="mt-2 flex items-center gap-1">
-                            <DeadlineTimeInput
-                              hour={deadlineHour}
-                              minute={deadlineMinute}
-                              onCommit={setDeadlineTimePart}
-                            />
-                            <div className="flex-1" />
-                            {(note.deadline != null || deadlineDraftValue) && (
-                              <button
-                                type="button"
-                                onClick={() => void handleClearDeadline()}
-                                className="text-red-500 hover:text-red-600"
-                              >
-                                清除
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => void handleConfirmDeadline()}
-                              className="px-2 py-1 rounded bg-cyan-400 text-white hover:bg-cyan-500"
-                            >
-                              确定
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                      <label className="mt-2 flex items-center justify-between gap-2 text-gray-500">
-                        <span>重复</span>
-                        <select
-                          aria-label="重复周期"
-                          value={repeatRuleDraft ?? "none"}
-                          disabled={!deadlineDraftValue}
-                          onChange={(event) => {
-                            const value = event.target.value;
-                            void handleRepeatRuleChange(value === "none" ? null : value as RepeatRule);
-                          }}
-                          className="min-w-28 rounded border border-gray-200 bg-white px-2 py-1 text-gray-700 disabled:bg-gray-50 disabled:text-gray-400"
-                        >
-                          <option value="none">不重复</option>
-                          <option value="daily">每天</option>
-                          <option value="weekly">每周</option>
-                          <option value="monthly">每月</option>
-                        </select>
-                      </label>
-                    </div>}
-
-                    {/* 移动到分组 */}
-                    <div className="relative">
-                      <button
-                        onClick={() => setShowGroupInput(!showGroupInput)}
-                        className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-700 flex items-center justify-between"
-                      >
-                        <span>移动到</span>
-                        <span className="text-gray-400">◂</span>
-                      </button>
-
-                      {/* 分组子菜单 - 弹出到左侧 */}
-                      {showGroupInput && (
-                        <div className="mt-0.5 bg-white border border-gray-200 rounded-md shadow-lg py-0.5 w-full">
-                          <button
-                            type="button"
-                            onClick={() => handleMoveToGroup(null)}
-                            className={`w-full text-left px-3 py-1.5 hover:bg-gray-50 ${
-                              note.groupId ? "text-gray-700" : "text-gray-400"
-                            }`}
-                            disabled={!note.groupId}
-                          >
-                            未分类
-                          </button>
-                          {groups.map((group) => (
-                            <div
-                              key={group.id}
-                              className="group/item relative flex items-center justify-between px-3 py-1.5 hover:bg-gray-50"
-                            >
-                              <button
-                                onClick={() => handleMoveToGroup(group.id)}
-                                className="flex-1 text-left text-gray-700"
-                              >
-                                {group.name}
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const groupNotes = notes.filter(n => n.groupId === group.id);
-                                  setDeleteConfirm({
-                                    groupId: group.id,
-                                    groupName: group.name,
-                                    noteCount: groupNotes.length,
-                                  });
-                                }}
-                                className="opacity-0 group-hover/item:opacity-100 text-red-400 hover:text-red-500 text-xs transition-opacity ml-2 flex-shrink-0"
-                                title="删除分组"
-                              >
-                                ✕
-                              </button>
-                            </div>
-                          ))}
-                          <div className="border-t border-gray-100 my-0.5"></div>
-                          <div className="px-2 py-1.5">
-                            <input
-                              type="text"
-                              value={newGroupName}
-                              onChange={(e) => setNewGroupName(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  handleCreateAndMoveToGroup();
-                                }
-                              }}
-                              placeholder="新分组..."
-                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded"
-                              autoFocus
-                            />
-                            <button
-                              onClick={handleCreateAndMoveToGroup}
-                              className="w-full mt-1 px-2 py-1 text-xs bg-cyan-400 text-white rounded hover:bg-cyan-500"
-                            >
-                              创建
-                            </button>
-                          </div>
-
-                          {/* 删除确认弹窗 */}
-                          {deleteConfirm && (
-                            <div className="mx-2 my-1 bg-white border border-gray-200 rounded-md shadow-xl p-3">
-                              <div className="text-xs text-gray-700 mb-2">
-                                确定删除分组 <span className="font-medium">"{deleteConfirm.groupName}"</span> 吗？
-                                {deleteConfirm.noteCount > 0 && (
-                                  <div className="mt-1 text-gray-500">
-                                    分组内的 {deleteConfirm.noteCount} 个待办将移至未分类。
-                                  </div>
-                                )}
-                              </div>
-                              <div className="flex gap-2 justify-end">
-                                <button
-                                  onClick={() => setDeleteConfirm(null)}
-                                  className="px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 rounded"
-                                >
-                                  取消
-                                </button>
-                                <button
-                                  onClick={async () => {
-                                    const groupId = deleteConfirm.groupId;
-                                    markGroupsMutation(groupId);
-                                    markNotesMutation();
-                                    try {
-                                      await deleteGroup(groupId);
-                                      setGroups((current) => current.filter((group) => group.id !== groupId));
-                                      setNotes(
-                                        useNotesStore.getState().notes.map((note) =>
-                                          note.groupId === groupId
-                                            ? { ...note, groupId: undefined }
-                                            : note
-                                        )
-                                      );
-                                      await Promise.all([loadGroups(), loadNotes()]);
-                                      setDeleteConfirm(null);
-                                      setShowMenu(false);
-                                      setShowGroupInput(false);
-                                    } catch (error) {
-                                      locallyDeletedGroupIdsRef.current.delete(groupId);
-                                      console.error("Failed to delete group:", error);
-                                    }
-                                  }}
-                                  className="px-2 py-1 text-xs text-white bg-red-500 hover:bg-red-600 rounded"
-                                >
-                                  确定
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="border-t border-gray-100"></div>
-                    <button
-                      onClick={() => {
-                        handleDelete(note);
-                        setShowMenu(false);
-                      }}
-                      className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-red-600"
-                    >
-                      删除
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* 展开的详细信息 - 只在已完成的待办展开时显示 */}
-        {isExpanded && note.isCompleted && note.completedAt && (
-          <div className="ml-7 mr-8 p-2 bg-gray-50 rounded border border-gray-200 text-xs space-y-1">
-            <div className="flex justify-between">
-              <span className="text-gray-600">状态：</span>
-              <span className="text-green-600 font-medium">已完成</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">创建时间：</span>
-              <span className="text-gray-800">{formatTimestamp(note.createdAt)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">完成时间：</span>
-              <span className="text-gray-800">{formatTimestamp(note.completedAt)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">用时：</span>
-              <span className="text-blue-600 font-medium">
-                {calculateDuration(note.createdAt, note.completedAt)}
-              </span>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  };
 
   return (
     <>
@@ -2454,7 +1193,7 @@ function App() {
                       <div className="text-xs text-gray-300 py-1">暂无设置截止时间的待办</div>
                     ) : (
                       sortWithNewFirst(todayNotes).map((note) => (
-                        <StableTodoItem key={note.id} note={note} render={renderTodoItem} />
+                        renderTodoItem(note)
                       ))
                     )}
                   </div>
@@ -2501,12 +1240,13 @@ function App() {
                     onAdd={() => {
                       void handleCreateNote(false, { groupId: group.id });
                     }}
+                    onAddMouseDown={preserveBlankDraftOnCreateMouseDown}
                   />
                   {isExpanded && (
                     <div className="space-y-0.5">
                       {groupNotes.length > 0 ? (
                         sortWithNewFirst(groupNotes).map((note) => (
-                          <StableTodoItem key={note.id} note={note} render={renderTodoItem} />
+                          renderTodoItem(note)
                         ))
                       ) : (
                         <div className="py-1 text-xs text-gray-300">暂无未完成待办</div>
@@ -2556,7 +1296,7 @@ function App() {
                 {expandedActiveGroups.has("active-no-group") && (
                   <div className="space-y-0.5">
                     {sortWithNewFirst(activeTodos).map((note) => (
-                      <StableTodoItem key={note.id} note={note} render={renderTodoItem} />
+                      renderTodoItem(note)
                     ))}
                   </div>
                 )}
@@ -2655,7 +1395,7 @@ function App() {
                 <div className="space-y-0.5">
                   {passwordGroupNotes.length > 0 ? (
                     sortWithNewFirst(passwordGroupNotes).map((note) => (
-                      <StableTodoItem key={note.id} note={note} render={renderTodoItem} />
+                      renderTodoItem(note)
                     ))
                   ) : (
                     <div className="text-xs text-gray-300 py-1">
@@ -2718,7 +1458,7 @@ function App() {
                         {expandedGroups.has(group.id) && (
                           <div className="space-y-0.5 ml-4">
                             {completedNotes.map((note) => (
-                              <StableTodoItem key={note.id} note={note} render={renderTodoItem} />
+                              renderTodoItem(note)
                             ))}
                           </div>
                         )}
@@ -2755,7 +1495,7 @@ function App() {
                       {expandedGroups.has('no-group') && (
                         <div className="space-y-0.5 ml-4">
                           {completedWithoutGroup.map((note) => (
-                            <StableTodoItem key={note.id} note={note} render={renderTodoItem} />
+                            renderTodoItem(note)
                           ))}
                         </div>
                       )}
@@ -2926,72 +1666,18 @@ function App() {
         </div>
       </div>
 
-      {/* 同步状态：进行中与完成/失败结果使用同一张卡片，避免位置和尺寸跳变 */}
-      {(isSyncing && syncProgress || syncMessage) && (
-        <div className="fixed bottom-20 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
-          <div
-            role="status"
-            aria-live="polite"
-            onClick={syncMessage && !isSyncing ? () => {
-              if (syncMessageTimerRef.current !== null) {
-                clearTimeout(syncMessageTimerRef.current);
-                syncMessageTimerRef.current = null;
-              }
-              setSyncMessage("");
-            } : undefined}
-            className={`h-11 w-full max-w-sm overflow-hidden rounded-lg px-4 py-2 shadow-lg ring-1 ${
-              syncMessage && !isSyncing && syncMessage.includes("失败")
-                ? "bg-[#FDE7E9] text-[#C42B1C] ring-[#C42B1C]/20"
-                : "bg-[#F3F3F3] text-[#1F1F1F] ring-black/10"
-            } ${syncMessage && !isSyncing ? "pointer-events-auto cursor-pointer" : ""}`}
-          >
-            {isSyncing && syncProgress ? (
-              <div className="relative flex h-full items-center justify-center text-xs">
-                <span className="w-full min-w-0 truncate px-7 text-center">{syncProgress.message}</span>
-                {syncProgress.total > 0 ? (
-                  <div
-                    role="progressbar"
-                    aria-label={syncProgress.message}
-                    aria-valuemin={0}
-                    aria-valuemax={syncProgress.total}
-                    aria-valuenow={syncProgress.current}
-                    className="absolute right-0 h-5 w-5"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-full w-full -rotate-90">
-                      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="3" className="text-black/10" />
-                      <circle
-                        cx="12"
-                        cy="12"
-                        r="9"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="3"
-                        strokeLinecap="round"
-                        pathLength="100"
-                        strokeDasharray="100"
-                        strokeDashoffset={100 - Math.min(100, (syncProgress.current / syncProgress.total) * 100)}
-                        className="text-cyan-400 transition-[stroke-dashoffset] duration-200"
-                      />
-                    </svg>
-                  </div>
-                ) : (
-                  <div
-                    role="progressbar"
-                    aria-label={syncProgress.message}
-                    className="absolute right-0 h-5 w-5"
-                  >
-                    <span className="block h-full w-full animate-spin rounded-full border-2 border-black/10 border-t-cyan-500" />
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="flex h-full items-center justify-center text-center">
-                <span className="min-w-0 truncate text-xs leading-5">{syncMessage}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      <SyncStatusCard
+        isSyncing={isSyncing}
+        syncProgress={syncProgress}
+        syncMessage={syncMessage}
+        onDismiss={() => {
+          if (syncMessageTimerRef.current !== null) {
+            clearTimeout(syncMessageTimerRef.current);
+            syncMessageTimerRef.current = null;
+          }
+          setSyncMessage("");
+        }}
+      />
       {groupDeleteConfirm && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20 p-4"

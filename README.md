@@ -9,7 +9,7 @@
 <img width="569" height="500" alt="PixPin_2026-08-07_23-27-19" src="https://github.com/user-attachments/assets/ec0e3622-08f8-458f-a6bd-e5b7e6e26f22" />
 <img width="568" height="510" alt="PixPin_2026-08-07_23-27-32" src="https://github.com/user-attachments/assets/70a30f13-3c29-4660-98d5-b4fd05601178" />
 
-当前版本：`v0.4.2` · [更新日志](CHANGELOG.md) · [功能状态](docs/FEATURE_STATUS.md)
+当前版本：`v0.4.5` · [更新日志](CHANGELOG.md) · [功能状态](docs/FEATURE_STATUS.md)
 
 ## ✨ 特性
 
