@@ -147,14 +147,18 @@ describe("App mobile startup sync", () => {
     });
 
     expect(screen.getByText("正在下载待办 40/100")).toBeInTheDocument();
-    expect(screen.getByRole("progressbar", { name: "正在下载待办 40/100" }))
-      .toHaveAttribute("aria-valuenow", "40");
-    expect(screen.getByText("40%")).toBeInTheDocument();
+    const progress = screen.getByRole("progressbar", { name: "正在下载待办 40/100" });
+    expect(progress).toHaveAttribute("aria-valuenow", "40");
+    expect(progress.querySelector("svg")).toBeInTheDocument();
+    expect(screen.queryByText("40%")).not.toBeInTheDocument();
 
     await act(async () => {
       finishSync?.("下载完成 - 下载 100 个待办");
       await Promise.resolve();
     });
+    expect(screen.getByText("下载完成 - 下载 100 个待办")).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("下载完成 - 下载 100 个待办");
     view.unmount();
   });
 });

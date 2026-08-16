@@ -71,8 +71,8 @@ const openSettingsWindow = async () => {
   }
 };
 
-const SYNC_SUCCESS_MESSAGE_MS = 5000;
-const SYNC_ERROR_MESSAGE_MS = 6000;
+const SYNC_SUCCESS_MESSAGE_MS = 3000;
+const SYNC_ERROR_MESSAGE_MS = 4000;
 const MOBILE_SYNC_SUCCESS_MESSAGE_MS = 2500;
 const MOBILE_SYNC_ERROR_MESSAGE_MS = 3500;
 const MOBILE_LONG_PRESS_MS = 450;
@@ -509,7 +509,7 @@ function App() {
     }
     setSyncMessage(message);
     const visibleDuration = isMobileRuntime
-      ? Math.min(duration, message.startsWith("同步失败")
+      ? Math.min(duration, message.includes("失败")
         ? MOBILE_SYNC_ERROR_MESSAGE_MS
         : MOBILE_SYNC_SUCCESS_MESSAGE_MS)
       : duration;
@@ -2926,61 +2926,69 @@ function App() {
         </div>
       </div>
 
-      {/* 同步进度 */}
-      {isSyncing && syncProgress && (
+      {/* 同步状态：进行中与完成/失败结果使用同一张卡片，避免位置和尺寸跳变 */}
+      {(isSyncing && syncProgress || syncMessage) && (
         <div className="fixed bottom-20 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
           <div
             role="status"
             aria-live="polite"
-            className="w-full max-w-sm rounded-lg bg-gray-900 px-4 py-3 text-white shadow-xl"
-          >
-            <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-              <span className="min-w-0 truncate">{syncProgress.message}</span>
-              {syncProgress.total > 0 && (
-                <span className="flex-shrink-0 text-gray-300">
-                  {Math.min(100, Math.round((syncProgress.current / syncProgress.total) * 100))}%
-                </span>
-              )}
-            </div>
-            {syncProgress.total > 0 ? (
-              <div
-                role="progressbar"
-                aria-label={syncProgress.message}
-                aria-valuemin={0}
-                aria-valuemax={syncProgress.total}
-                aria-valuenow={syncProgress.current}
-                className="h-2 overflow-hidden rounded-full bg-gray-700"
-              >
-                <div
-                  className="h-full rounded-full bg-cyan-400 transition-[width] duration-200"
-                  style={{
-                    width: `${Math.min(100, (syncProgress.current / syncProgress.total) * 100)}%`,
-                  }}
-                />
-              </div>
-            ) : (
-              <div className="h-2 overflow-hidden rounded-full bg-gray-700">
-                <div className="h-full w-1/3 animate-pulse rounded-full bg-cyan-400" />
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 同步消息提示 */}
-      {syncMessage && (
-        <div className="absolute bottom-14 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
-          <div
-            onClick={() => {
+            onClick={syncMessage && !isSyncing ? () => {
               if (syncMessageTimerRef.current !== null) {
                 clearTimeout(syncMessageTimerRef.current);
                 syncMessageTimerRef.current = null;
               }
               setSyncMessage("");
-            }}
-            className="max-w-full min-w-0 px-4 py-2 bg-gray-800 text-white text-xs leading-relaxed text-center rounded-md shadow-lg whitespace-normal break-words pointer-events-auto cursor-pointer"
+            } : undefined}
+            className={`h-11 w-full max-w-sm overflow-hidden rounded-lg px-4 py-2 shadow-lg ring-1 ${
+              syncMessage && !isSyncing && syncMessage.includes("失败")
+                ? "bg-[#FDE7E9] text-[#C42B1C] ring-[#C42B1C]/20"
+                : "bg-[#F3F3F3] text-[#1F1F1F] ring-black/10"
+            } ${syncMessage && !isSyncing ? "pointer-events-auto cursor-pointer" : ""}`}
           >
-            {syncMessage}
+            {isSyncing && syncProgress ? (
+              <div className="relative flex h-full items-center justify-center text-xs">
+                <span className="w-full min-w-0 truncate px-7 text-center">{syncProgress.message}</span>
+                {syncProgress.total > 0 ? (
+                  <div
+                    role="progressbar"
+                    aria-label={syncProgress.message}
+                    aria-valuemin={0}
+                    aria-valuemax={syncProgress.total}
+                    aria-valuenow={syncProgress.current}
+                    className="absolute right-0 h-5 w-5"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-full w-full -rotate-90">
+                      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="3" className="text-black/10" />
+                      <circle
+                        cx="12"
+                        cy="12"
+                        r="9"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="3"
+                        strokeLinecap="round"
+                        pathLength="100"
+                        strokeDasharray="100"
+                        strokeDashoffset={100 - Math.min(100, (syncProgress.current / syncProgress.total) * 100)}
+                        className="text-cyan-400 transition-[stroke-dashoffset] duration-200"
+                      />
+                    </svg>
+                  </div>
+                ) : (
+                  <div
+                    role="progressbar"
+                    aria-label={syncProgress.message}
+                    className="absolute right-0 h-5 w-5"
+                  >
+                    <span className="block h-full w-full animate-spin rounded-full border-2 border-black/10 border-t-cyan-500" />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex h-full items-center justify-center text-center">
+                <span className="min-w-0 truncate text-xs leading-5">{syncMessage}</span>
+              </div>
+            )}
           </div>
         </div>
       )}
